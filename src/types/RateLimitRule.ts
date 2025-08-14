@@ -7,11 +7,7 @@
  * file that was distributed with this source code.
  */
 
-import { Runner } from '@athenna/test'
-
-await Runner.setTsEnv()
-  .addAssertPlugin()
-  .addPath('tests/unit/**/*.ts')
-  .setCliArgs(process.argv.slice(2))
-  .setGlobalTimeout(30000)
-  .run()
+export type RateLimitRule = {
+  type: 'second' | 'minute' | 'hour' | 'day' | 'month'
+  limit: number
+}

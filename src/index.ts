@@ -1,5 +1,5 @@
 /**
- * @athenna/template
+ * @athenna/ratelimiter
  *
  * (c) João Lenon <lenon@athenna.io>
  *
@@ -7,4 +7,7 @@
  * file that was distributed with this source code.
  */
 
-export * from '#src/bootstrap/Bootstrap'
+export * from '#src/ratelimiter/RateLimiter'
+export * from '#src/ratelimiter/RateLimiterBuilder'
+export * from '#src/ratelimiter/stores/MemoryStore'
+export * from '#src/ratelimiter/stores/RateLimitStore'
