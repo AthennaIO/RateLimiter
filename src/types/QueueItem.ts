@@ -10,7 +10,7 @@
 import type { ScheduleOptions } from '#src/types'
 
 export type QueueItem<T> = {
-  run: (signal?: AbortSignal) => Promise<T>
+  run: (signal?: AbortSignal) => T | Promise<T>
   resolve: (v: T) => void
   reject: (e: unknown) => void
   abortHandler?: () => void

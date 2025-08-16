@@ -185,7 +185,7 @@ export class RateLimiterBuilder {
    * the rate limit rules.
    */
   public schedule<T = any>(
-    fn: (signal?: AbortSignal) => Promise<T>,
+    fn: (signal?: AbortSignal) => T | Promise<T>,
     opts: ScheduleOptions = {}
   ): Promise<T> {
     if (!this.options.key) {
@@ -218,8 +218,8 @@ export class RateLimiterBuilder {
       if (opts.signal) {
         const onAbort = () => {
           /**
-           * If the task has already started, we don't can't abort it.
-           * The only way to abort in this case is if the handler defined
+           * If the task has already started, we can't abort it. The
+           * only way to abort in this case is if the handler defined
            * by the user abort the task.
            */
           if (item.started) {

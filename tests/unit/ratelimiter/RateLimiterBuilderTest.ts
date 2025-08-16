@@ -83,7 +83,7 @@ export class RateLimiterBuilderTest {
         RateLimiter.build()
           .store(new MemoryStore())
           .addRule({ type: 'second', limit: 1 })
-          .schedule(async () => {}),
+          .schedule(() => {}),
       MissingKeyException
     )
   }
@@ -95,7 +95,7 @@ export class RateLimiterBuilderTest {
         RateLimiter.build()
           .key('request:api-key:/profile')
           .store(new MemoryStore())
-          .schedule(async () => {}),
+          .schedule(() => {}),
       MissingRuleException
     )
   }
@@ -107,7 +107,7 @@ export class RateLimiterBuilderTest {
         RateLimiter.build()
           .key('request:api-key:/profile')
           .addRule({ type: 'second', limit: 1 })
-          .schedule(async () => {}),
+          .schedule(() => {}),
       MissingStoreException
     )
   }
@@ -124,12 +124,26 @@ export class RateLimiterBuilderTest {
     const numberOfRequests = 5
 
     for (let i = 0; i < numberOfRequests; i++) {
-      promises.push(limiter.schedule(async () => 'ok' + i))
+      promises.push(limiter.schedule(() => 'ok' + i))
     }
 
     await Promise.all(promises)
 
     assert.isAtLeast(Date.now() - dateStart, 400)
+  }
+
+  @Test()
+  public async shouldBeAbleToHaveErrorsHappeningInsideTheRateLimiterHandler({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .key('request:api-key:/profile')
+      .addRule({ type: 'second', limit: 1 })
+
+    await assert.rejects(() => {
+      return limiter.schedule(() => {
+        throw new Error('failed')
+      })
+    })
   }
 
   @Test()
@@ -144,7 +158,7 @@ export class RateLimiterBuilderTest {
     const numberOfRequests = 5
 
     for (let i = 0; i < numberOfRequests; i++) {
-      promises.push(limiter.schedule(async () => 'ok' + i))
+      promises.push(limiter.schedule(() => 'ok' + i))
     }
 
     await Promise.all(promises)
@@ -164,7 +178,7 @@ export class RateLimiterBuilderTest {
     const numberOfRequests = 5
 
     for (let i = 0; i < numberOfRequests; i++) {
-      promises.push(limiter.schedule(async () => 'ok' + i))
+      promises.push(limiter.schedule(() => 'ok' + i))
     }
 
     await Promise.all(promises)
@@ -184,7 +198,7 @@ export class RateLimiterBuilderTest {
     const numberOfRequests = 5
 
     for (let i = 0; i < numberOfRequests; i++) {
-      promises.push(limiter.schedule(async () => 'ok' + i))
+      promises.push(limiter.schedule(() => 'ok' + i))
     }
 
     await Promise.all(promises)
@@ -204,7 +218,7 @@ export class RateLimiterBuilderTest {
     const numberOfRequests = 5
 
     for (let i = 0; i < numberOfRequests; i++) {
-      promises.push(limiter.schedule(async () => 'ok' + i))
+      promises.push(limiter.schedule(() => 'ok' + i))
     }
 
     await Promise.all(promises)
@@ -226,7 +240,7 @@ export class RateLimiterBuilderTest {
 
     for (let i = 0; i < numberOfRequests; i++) {
       promises.push(
-        limiter.schedule(async () => {
+        limiter.schedule(() => {
           starts.push(Date.now())
           return 'ok' + i
         })
@@ -261,7 +275,7 @@ export class RateLimiterBuilderTest {
     const numberOfRequests = 10
 
     for (let i = 0; i < numberOfRequests; i++) {
-      limiter.schedule(async () => 'ok' + i)
+      limiter.schedule(() => 'ok' + i)
     }
 
     limiter.truncate()
@@ -281,7 +295,7 @@ export class RateLimiterBuilderTest {
     const numberOfRequests = 5
 
     for (let i = 0; i < numberOfRequests; i++) {
-      promises.push(limiter.schedule(async () => 'ok' + i))
+      promises.push(limiter.schedule(() => 'ok' + i))
     }
 
     assert.equal(limiter.getQueuedCount(), 5)
@@ -366,8 +380,8 @@ export class RateLimiterBuilderTest {
       .maxConcurrent(10)
       .addRule({ type: 'second', limit: 1 })
 
-    limiter.schedule(async () => new Promise<void>(() => {}))
-    limiter.schedule(async () => 'ok')
+    limiter.schedule(() => new Promise<void>(() => {}))
+    limiter.schedule(() => 'ok')
 
     await Sleep.for(0).milliseconds().wait()
 
@@ -394,8 +408,8 @@ export class RateLimiterBuilderTest {
       return 'ok0'
     })
 
-    const p1 = limiter.schedule(async () => 'ok1', { signal: abortController.signal }).catch(err => err)
-    const p2 = limiter.schedule(async () => 'ok2')
+    const p1 = limiter.schedule(() => 'ok1', { signal: abortController.signal }).catch(err => err)
+    const p2 = limiter.schedule(() => 'ok2')
 
     abortController.abort('testing')
     await Sleep.for(30).milliseconds().wait()
@@ -483,5 +497,39 @@ export class RateLimiterBuilderTest {
 
     assert.ok(caught)
     assert.equal(caught?.name, 'AbortError')
+  }
+
+  @Test()
+  public async shouldBeAbleToAbortARateLimiterTaskBeforeItEvenStarts({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .key('request:api-key:/profile')
+      .addRule({ type: 'second', limit: 1 })
+
+    const abortController = new AbortController()
+
+    abortController.abort('testing')
+
+    const p = limiter.schedule(() => 'ok', { signal: abortController.signal })
+
+    await assert.rejects(() => p, 'Aborted')
+  }
+
+  @Test()
+  public async shouldNotBeAbleToAbortTheTaskIfItHasAlreadyStartedRunning({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .key('request:api-key:/profile')
+      .addRule({ type: 'second', limit: 1 })
+
+    const abortController = new AbortController()
+
+    const p = limiter.schedule(() => 'ok', { signal: abortController.signal })
+
+    await Sleep.for(900).milliseconds().wait()
+
+    abortController.abort('testing')
+
+    await assert.doesNotReject(() => p)
   }
 }
