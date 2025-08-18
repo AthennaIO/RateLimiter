@@ -1,6 +1,6 @@
 {
   "name": "@athenna/ratelimiter",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "description": "Respect the rate limit rules of API's you need to consume.",
   "license": "MIT",
   "author": "João Lenon <lenon@athenna.io>",
@@ -50,10 +50,11 @@
     "#tests": "./tests/index.js"
   },
   "devDependencies": {
-    "@athenna/cache": "^5.1.0",
-    "@athenna/common": "^5.17.0",
+    "@athenna/cache": "^5.2.0",
+    "@athenna/common": "^5.18.0",
     "@athenna/config": "^5.4.0",
     "@athenna/ioc": "^5.2.0",
+    "@athenna/logger": "^5.10.0",
     "@athenna/test": "^5.5.0",
     "@athenna/tsconfig": "^5.0.0",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
