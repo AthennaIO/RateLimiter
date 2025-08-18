@@ -7,7 +7,10 @@
  * file that was distributed with this source code.
  */
 
+export * from '#src/types'
+
 export * from '#src/ratelimiter/RateLimiter'
 export * from '#src/ratelimiter/RateLimiterBuilder'
+export * from '#src/ratelimiter/stores/RedisStore'
 export * from '#src/ratelimiter/stores/MemoryStore'
 export * from '#src/ratelimiter/stores/RateLimitStore'
