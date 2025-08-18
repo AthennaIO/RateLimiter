@@ -13,7 +13,7 @@ export type RateLimitStoreOptions = {
   /**
    * The @athenna/cache store connection that will be used to save the rate limit buckets.
    */
-  store?: string
+  store?: 'redis' | 'memory' | string
 
   /**
    * Override the default window in milliseconds. Useful for testing purposes when you want
