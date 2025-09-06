@@ -7,8 +7,9 @@
  * file that was distributed with this source code.
  */
 
-export * from '#src/types'
+import type { RateLimitApiTarget } from '#src/types'
 
-export * from '#src/ratelimiter/RateLimiter'
-export * from '#src/ratelimiter/RateLimitStore'
-export * from '#src/ratelimiter/RateLimiterBuilder'
+export type RateLimitScheduleCtx = {
+  signal?: AbortSignal
+  apiTarget?: RateLimitApiTarget
+}

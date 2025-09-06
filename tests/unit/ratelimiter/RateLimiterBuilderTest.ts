@@ -1,6 +1,6 @@
-import { Path, Sleep } from '@athenna/common'
+import { RateLimiter } from '#src'
+import { Path, Sleep, Uuid } from '@athenna/common'
 import { CacheProvider } from '@athenna/cache'
-import { MemoryStore, RateLimiter } from '#src'
 import { AfterEach, BeforeEach, Test, type Context } from '@athenna/test'
 import { MissingKeyException } from '#src/exceptions/MissingKeyException'
 import { MissingRuleException } from '#src/exceptions/MissingRuleException'
@@ -81,7 +81,7 @@ export class RateLimiterBuilderTest {
     assert.throws(
       () =>
         RateLimiter.build()
-          .store(new MemoryStore())
+          .store('memory')
           .addRule({ type: 'second', limit: 1 })
           .schedule(() => {}),
       MissingKeyException
@@ -94,7 +94,7 @@ export class RateLimiterBuilderTest {
       () =>
         RateLimiter.build()
           .key('request:api-key:/profile')
-          .store(new MemoryStore())
+          .store('memory')
           .schedule(() => {}),
       MissingRuleException
     )
@@ -115,7 +115,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToBuildARateLimiterWithARuleOfOneRequestPerSecond({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
 
@@ -135,7 +135,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToHaveErrorsHappeningInsideTheRateLimiterHandler({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
 
@@ -149,7 +149,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToBuildARateLimiterWithARuleOfOneRequestPerMinute({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { minute: 100 } }))
+      .store('memory', { windowMs: { minute: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'minute', limit: 1 })
 
@@ -169,7 +169,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToBuildARateLimiterWithARuleOfOneRequestPerHour({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { hour: 100 } }))
+      .store('memory', { windowMs: { hour: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'hour', limit: 1 })
 
@@ -189,7 +189,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToBuildARateLimiterWithARuleOfOneRequestPerDay({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { day: 100 } }))
+      .store('memory', { windowMs: { day: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'day', limit: 1 })
 
@@ -209,7 +209,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToBuildARateLimiterWithARuleOfOneRequestPerMonth({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { month: 100 } }))
+      .store('memory', { windowMs: { month: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'month', limit: 1 })
 
@@ -229,7 +229,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToBuildARateLimiterWithSecondAndMinutesRules({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 300, minute: 400 } }))
+      .store('memory', { windowMs: { second: 300, minute: 400 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
       .addRule({ type: 'minute', limit: 2 })
@@ -268,7 +268,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToCleanTheLimiterExecutionByTruncatingIt({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
 
@@ -287,7 +287,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToGetTheQueuedCountOfTheLimiter({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
 
@@ -306,7 +306,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToGetTheActiveCountOfTheLimiter({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
 
@@ -338,7 +338,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToGetTheActiveCountOfTheLimiterWithConcurrentRequests({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .jitterMs(0)
       .maxConcurrent(5)
@@ -374,7 +374,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToGetWhenTheRateLimiterWillBeAvailable({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .jitterMs(0)
       .maxConcurrent(10)
@@ -396,7 +396,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToAbortARateLimiterTaskThatIsEnqueuedUsingAnAbortController({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
 
@@ -428,7 +428,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldNotBeAbleToCancelAlreadyStartedRateLimiterTask({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
 
@@ -462,7 +462,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToCancelAlreadyStartedRateLimiterTaskIfUserUsesTheAbortController({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
 
@@ -470,10 +470,10 @@ export class RateLimiterBuilderTest {
     const abortController = new AbortController()
 
     const p = limiter.schedule(
-      async signal => {
+      async ctx => {
         started = true
 
-        await this.cancellableSleep(1_000, signal)
+        await this.cancellableSleep(1_000, ctx.signal)
 
         return 'ok'
       },
@@ -502,7 +502,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldBeAbleToAbortARateLimiterTaskBeforeItEvenStarts({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
 
@@ -518,7 +518,7 @@ export class RateLimiterBuilderTest {
   @Test()
   public async shouldNotBeAbleToAbortTheTaskIfItHasAlreadyStartedRunning({ assert }: Context) {
     const limiter = RateLimiter.build()
-      .store(new MemoryStore({ windowMs: { second: 100 } }))
+      .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
 
@@ -531,5 +531,183 @@ export class RateLimiterBuilderTest {
     abortController.abort('testing')
 
     await assert.doesNotReject(() => p)
+  }
+
+  @Test()
+  public async shouldBeAbleToBuildARateLimiterWithARuleOfOneRequestPerSecondWithAnApiTarget({ assert }: Context) {
+    assert.plan(6)
+
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .addRule({ type: 'second', limit: 1 })
+      .addApiTarget({ id: Uuid.generate(), baseUrl: 'http://api1.com' })
+
+    const promises = []
+    const dateStart = Date.now()
+    const numberOfRequests = 5
+
+    for (let i = 0; i < numberOfRequests; i++) {
+      promises.push(
+        limiter.schedule(({ apiTarget }) => {
+          assert.isDefined(apiTarget)
+
+          return 'ok' + i
+        })
+      )
+    }
+
+    await Promise.all(promises)
+
+    assert.isAtLeast(Date.now() - dateStart, 400)
+  }
+
+  @Test()
+  public async shouldBeAbleToHaveErrorsHappeningInsideTheRateLimiterHandlerEvenWithAnApiTargetSet({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .addRule({ type: 'second', limit: 1 })
+      .addApiTarget({ id: Uuid.generate(), baseUrl: 'http://api1.com' })
+
+    await assert.rejects(() => {
+      return limiter.schedule(() => {
+        throw new Error('failed')
+      })
+    })
+  }
+
+  @Test()
+  public async shouldBeAbleToTryWithTheSecondApiTargetIfTheFirstApiTargetIsAtFullCapacityInASequentialScenario({
+    assert
+  }: Context) {
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .addRule({ type: 'second', limit: 1 })
+      .addApiTarget({ id: 't1', baseUrl: 'http://api1.com' })
+      .addApiTarget({ id: 't2', baseUrl: 'http://api2.com' })
+
+    const first = await limiter.schedule(({ apiTarget }) => apiTarget.baseUrl)
+
+    assert.equal(first, 'http://api1.com')
+
+    const second = await limiter.schedule(({ apiTarget }) => apiTarget.baseUrl)
+
+    assert.equal(second, 'http://api2.com')
+  }
+
+  @Test()
+  public async shouldBeAbleToTryWithTheSecondApiTargetIfTheFirstApiTargetIsAtFullCapacityInAConcurrentScenario({
+    assert
+  }: Context) {
+    const limiter = RateLimiter.build()
+      .maxConcurrent(2)
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .addRule({ type: 'second', limit: 1 })
+      .addApiTarget({ id: 't1', baseUrl: 'http://api1.com' })
+      .addApiTarget({ id: 't2', baseUrl: 'http://api2.com' })
+
+    const barrier = this.createBarrier()
+    const used: string[] = []
+
+    const run = async ({ apiTarget }) => {
+      used.push(apiTarget.baseUrl)
+
+      await barrier.wait()
+
+      return apiTarget.baseUrl
+    }
+
+    const p1 = limiter.schedule(run)
+    const p2 = limiter.schedule(run)
+
+    await Sleep.for(5).milliseconds().wait()
+
+    barrier.release()
+
+    const results = await Promise.all([p1, p2])
+
+    results.sort()
+
+    assert.deepEqual(results, ['http://api1.com', 'http://api2.com'])
+
+    used.sort()
+    assert.deepEqual(used, ['http://api1.com', 'http://api2.com'])
+  }
+
+  @Test()
+  public async shouldBeAbleToTryWithTheSecondApiTargetIfTheFirstApiTargetIsAtFullCapacityInASequentialScenarioWithRoundRobinStrategy({
+    assert
+  }: Context) {
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .apiTargetSelectionStrategy('round_robin')
+      .addRule({ type: 'second', limit: 1 })
+      .addApiTarget({ id: 't1', baseUrl: 'http://api1.com' })
+      .addApiTarget({ id: 't2', baseUrl: 'http://api2.com' })
+
+    const used: string[] = []
+
+    const tasks = Array.from({ length: 4 }, () =>
+      limiter.schedule(({ apiTarget }) => {
+        used.push(apiTarget.baseUrl)
+
+        return apiTarget.baseUrl
+      })
+    )
+
+    const results = await Promise.all(tasks)
+
+    assert.deepEqual(results, used)
+    assert.deepEqual(used, ['http://api1.com', 'http://api2.com', 'http://api1.com', 'http://api2.com'])
+  }
+
+  @Test()
+  public async shouldBeAbleToTryWithTheSecondApiTargetIfTheFirstApiTargetIsAtFullCapacityInAConcurrentScenarioWithRoundRobinStrategy({
+    assert
+  }: Context) {
+    const limiter = RateLimiter.build()
+      .maxConcurrent(2)
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .apiTargetSelectionStrategy('round_robin')
+      .addRule({ type: 'second', limit: 1 })
+      .addApiTarget({ id: 't1', baseUrl: 'http://api1.com' })
+      .addApiTarget({ id: 't2', baseUrl: 'http://api2.com' })
+
+    const barrier = this.createBarrier()
+    const started: string[] = []
+
+    const p1 = limiter.schedule(async ({ apiTarget }) => {
+      started.push(apiTarget.baseUrl)
+
+      await barrier.wait()
+
+      return apiTarget.baseUrl
+    })
+    const p2 = limiter.schedule(async ({ apiTarget }) => {
+      started.push(apiTarget.baseUrl)
+
+      await barrier.wait()
+
+      return apiTarget.baseUrl
+    })
+
+    for (let i = 0; i < 20 && started.length < 2; i++) {
+      await Sleep.for(1).milliseconds().wait()
+    }
+
+    assert.deepEqual(started, ['http://api1.com', 'http://api2.com'])
+
+    barrier.release()
+
+    const result = await Promise.all([p1, p2])
+
+    result.sort()
+
+    assert.deepEqual(result, ['http://api1.com', 'http://api2.com'])
   }
 }

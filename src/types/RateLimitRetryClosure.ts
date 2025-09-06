@@ -7,8 +7,8 @@
  * file that was distributed with this source code.
  */
 
-export * from '#src/types'
+import type { RateLimitRetryCtx, RateLimitRetryDecision } from '#src/types'
 
-export * from '#src/ratelimiter/RateLimiter'
-export * from '#src/ratelimiter/RateLimitStore'
-export * from '#src/ratelimiter/RateLimiterBuilder'
+export type RateLimitRetryClosure = (
+  ctx: RateLimitRetryCtx
+) => RateLimitRetryDecision | Promise<RateLimitRetryDecision>

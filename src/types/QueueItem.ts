@@ -7,13 +7,15 @@
  * file that was distributed with this source code.
  */
 
-import type { ScheduleOptions } from '#src/types'
+import type { RateLimitScheduleCtx } from '#src/types'
 
 export type QueueItem<T> = {
-  run: (signal?: AbortSignal) => T | Promise<T>
+  run: (ctx: RateLimitScheduleCtx) => T | Promise<T>
   resolve: (v: T) => void
   reject: (e: unknown) => void
   abortHandler?: () => void
   started: boolean
-  opts: ScheduleOptions
+  signal?: AbortSignal
+  attempt?: number
+  pinnedApiTargetId?: string
 }

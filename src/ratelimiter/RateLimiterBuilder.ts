@@ -11,21 +11,28 @@ import type {
   QueueItem,
   RateLimitRule,
   ScheduleOptions,
-  RateLimiterOptions
+  RateLimitRetryCtx,
+  RateLimiterOptions,
+  RateLimitApiTarget,
+  RateLimitScheduleCtx,
+  RateLimitStoreOptions,
+  RateLimitRetryDecision
 } from '#src/types'
 
+import { Macroable } from '@athenna/common'
+import { RateLimitStore } from '#src/ratelimiter/RateLimitStore'
 import { MissingKeyException } from '#src/exceptions/MissingKeyException'
 import { MissingRuleException } from '#src/exceptions/MissingRuleException'
-import type { RateLimitStore } from '#src/ratelimiter/stores/RateLimitStore'
 import { MissingStoreException } from '#src/exceptions/MissingStoreException'
 
-export class RateLimiterBuilder {
+export class RateLimiterBuilder extends Macroable {
   /**
    * Holds the options that will be used to build the rate limiter.
    */
   private options: RateLimiterOptions = {
     maxConcurrent: 1,
-    jitterMs: 0
+    jitterMs: 0,
+    apiTargetSelectionStrategy: 'first_available'
   }
 
   /**
@@ -47,6 +54,11 @@ export class RateLimiterBuilder {
   private queue: QueueItem<any>[] = []
 
   /**
+   * Index for when using round_robin selection strategy.
+   */
+  private rrIndex = 0
+
+  /**
    * Holds the setTimeout id to be able to disable it
    * later on.
    */
@@ -56,6 +68,26 @@ export class RateLimiterBuilder {
    * Define when the next retry will happen in milliseconds.
    */
   private nextWakeUpAt: number = 0
+
+  /**
+   * Cooldown per API Target for when an error happens.
+   */
+  private cooldownUntil = new Map<string, number>()
+
+  /**
+   * Map the key inside the store.
+   */
+  private createApiTargetKey(apiTarget: RateLimitApiTarget) {
+    let host = ''
+
+    try {
+      host = new URL(apiTarget.baseUrl).host
+    } catch {
+      host = apiTarget.baseUrl
+    }
+
+    return `${this.options.key}:${host}:${apiTarget.id}`
+  }
 
   /**
    * Logical key that will be used by store to save buckets.
@@ -70,8 +102,15 @@ export class RateLimiterBuilder {
    * Define the store that will be responsible to save the
    * rate limit buckets.
    */
-  public store(value: RateLimitStore) {
-    this.options.store = value
+  public store(
+    store: 'memory' | 'redis' | string,
+    options: Omit<RateLimitStoreOptions, 'store'> = {}
+  ) {
+    // eslint-disable-next-line
+    // @ts-ignore
+    options.store = store
+
+    this.options.store = new RateLimitStore(options)
 
     return this
   }
@@ -109,13 +148,64 @@ export class RateLimiterBuilder {
   }
 
   /**
+   * Add a new rate limit API target.
+   */
+  public addApiTarget(apiTarget: RateLimitApiTarget) {
+    if (!this.options.apiTargets) {
+      this.options.apiTargets = []
+    }
+
+    this.options.apiTargets.push(apiTarget)
+
+    return this
+  }
+
+  /**
+   * Set multiple rate limit rules with one method call.
+   */
+  public setRules(rules: RateLimitRule[]) {
+    rules.forEach(rule => this.addRule(rule))
+
+    return this
+  }
+
+  /**
+   * Set multiple rate limit API targets with one method call.
+   */
+  public setApiTargets(apiTargets: RateLimitApiTarget[]) {
+    apiTargets.forEach(apiTarget => this.addApiTarget(apiTarget))
+
+    return this
+  }
+
+  /**
+   * Define the API target selection strategy that will be used
+   * to select the next one when an API fails.
+   */
+  public apiTargetSelectionStrategy(value: 'first_available' | 'round_robin') {
+    this.options.apiTargetSelectionStrategy = value
+
+    return this
+  }
+
+  public retryStrategy(
+    fn: (
+      ctx: RateLimitRetryCtx
+    ) => RateLimitRetryDecision | Promise<RateLimitRetryDecision>
+  ) {
+    this.options.retryStrategy = fn
+
+    return this
+  }
+
+  /**
    * Return the current number of active tasks.
    *
    * @example
    * ```ts
    * const limiter = RateLimiter.build()
-   *   .store(new MemoryStore())
-   *   .key('request:api-key:/profile')
+   *   .store('memory')
+   *   .key('request:/profile')
    *   .addRule({ type: 'second', limit: 1 })
    *
    * limiter.getActiveCount() // 0
@@ -132,8 +222,8 @@ export class RateLimiterBuilder {
    * @example
    * ```ts
    * const limiter = RateLimiter.build()
-   *   .store(new MemoryStore())
-   *   .key('request:api-key:/profile')
+   *   .store('memory')
+   *   .key('request:/profile')
    *   .addRule({ type: 'second', limit: 1 })
    *
    * limiter.getQueuedCount() // 0
@@ -144,14 +234,14 @@ export class RateLimiterBuilder {
   }
 
   /**
-   * Stimate when the next slot will be available based on the
+   * Estimate when the next slot will be available based on the
    * next retry defined.
    *
    * @example
    * ```ts
    * const limiter = RateLimiter.build()
-   *   .store(new MemoryStore())
-   *   .key('request:api-key:/profile')
+   *   .store('memory')
+   *   .key('request:/profile')
    *   .addRule({ type: 'second', limit: 1 })
    *
    * limiter.getAvailableInMs() // 0
@@ -171,6 +261,7 @@ export class RateLimiterBuilder {
     this.active = 0
     this.nextWakeUpAt = 0
     this.storeErrorCount = 0
+    this.cooldownUntil.clear()
 
     if (this.timer) {
       clearTimeout(this.timer)
@@ -185,7 +276,7 @@ export class RateLimiterBuilder {
    * the rate limit rules.
    */
   public schedule<T = any>(
-    fn: (signal?: AbortSignal) => T | Promise<T>,
+    closure: (ctx: RateLimitScheduleCtx) => T | Promise<T>,
     opts: ScheduleOptions = {}
   ): Promise<T> {
     if (!this.options.key) {
@@ -197,7 +288,19 @@ export class RateLimiterBuilder {
     }
 
     if (!this.options.rules?.length) {
-      throw new MissingRuleException()
+      if (!this.options.apiTargets?.length) {
+        throw new MissingRuleException()
+      }
+
+      const missingRuleApiTargets = this.options.apiTargets.filter(
+        apiTarget => !apiTarget.rules
+      )
+
+      if (missingRuleApiTargets.length) {
+        throw new MissingRuleException(
+          missingRuleApiTargets.map(t => t.baseUrl)
+        )
+      }
     }
 
     if (opts.signal?.aborted) {
@@ -206,11 +309,12 @@ export class RateLimiterBuilder {
 
     return new Promise<T>((resolve, reject) => {
       const item: QueueItem<T> = {
-        run: fn,
+        run: closure,
         resolve,
         reject,
         started: false,
-        opts
+        signal: opts.signal,
+        attempt: 1
       }
 
       this.queue.push(item)
@@ -264,6 +368,225 @@ export class RateLimiterBuilder {
 
       const now = Date.now()
 
+      if (this.options.apiTargets?.length) {
+        let minWait = Number.POSITIVE_INFINITY
+        let apiTargetChosen: RateLimitApiTarget = null
+
+        const nextItem = this.queue[0]
+        const pinnedApiTargetId = nextItem?.pinnedApiTargetId
+
+        for (const i of this.createIdxBySelectionStrategy(pinnedApiTargetId)) {
+          const apiTarget = this.options.apiTargets[i]
+          const cooldown = this.cooldownUntil.get(apiTarget.id)
+
+          if (cooldown && cooldown > now) {
+            minWait = Math.min(minWait, cooldown - now)
+            continue
+          }
+
+          const key = this.createApiTargetKey(apiTarget)
+          const rules = apiTarget.rules?.length
+            ? apiTarget.rules
+            : this.options.rules
+
+          try {
+            const res = await this.options.store.tryReserve(key, rules)
+
+            this.storeErrorCount = 0
+
+            if (res.allowed) {
+              apiTargetChosen = apiTarget
+
+              if (this.options.apiTargetSelectionStrategy === 'round_robin') {
+                this.rrIndex = (i + 1) % this.options.apiTargets.length
+              }
+
+              break
+            } else {
+              minWait = Math.min(minWait, res.waitMs)
+            }
+          } catch (error) {
+            this.storeErrorCount++
+
+            if (this.storeErrorCount > 10) {
+              while (this.queue.length) {
+                this.queue.shift().reject(error)
+              }
+
+              throw error
+            }
+
+            minWait = Math.min(minWait, 100)
+          }
+        }
+
+        if (!apiTargetChosen) {
+          const delay =
+            (isFinite(minWait) ? minWait : 100) + this.randomJitter()
+
+          this.nextWakeUpAt = now + delay
+          this.timer = setTimeout(tryRun, delay)
+
+          return
+        }
+
+        const item = this.queue.shift()
+
+        if (item.signal?.aborted) {
+          item.reject(new DOMException('Aborted', 'AbortError'))
+          this.pump()
+          return
+        }
+
+        item.started = true
+
+        if (item.signal && item.abortHandler) {
+          item.signal.removeEventListener('abort', item.abortHandler)
+          item.abortHandler = undefined
+        }
+
+        this.active++
+
+        Promise.resolve()
+          .then(() =>
+            item.run({ signal: item.signal, apiTarget: apiTargetChosen })
+          )
+          .then(result => {
+            this.release({ isToPump: true })
+
+            item.resolve(result)
+          })
+          .catch(async error => {
+            if (!this.options.retryStrategy) {
+              this.release({ isToPump: true })
+
+              item.reject(error)
+
+              return
+            }
+
+            const key = this.createApiTargetKey(apiTargetChosen)
+
+            const ctx: RateLimitRetryCtx = {
+              key,
+              error,
+              attempt: item.attempt,
+              apiTarget: apiTargetChosen
+            }
+
+            const decision = await this.options.retryStrategy(ctx)
+
+            switch (decision.type) {
+              case 'retry_same':
+                this.release({ isToPump: false })
+
+                item.attempt++
+                item.started = false
+                item.pinnedApiTargetId = apiTargetChosen.id
+
+                if (item.signal?.aborted) {
+                  item.reject(new DOMException('Aborted', 'AbortError'))
+                  break
+                }
+
+                this.queue.unshift(item)
+
+                const delay = Math.max(0, decision.delayMs ?? 0)
+
+                if (delay > 0) {
+                  this.nextWakeUpAt = Date.now() + delay
+                  this.timer = setTimeout(() => this.pump(), delay)
+                } else {
+                  this.pump()
+                }
+
+                return
+
+              case 'retry_other': {
+                if (decision.cooldownMs > 0) {
+                  await this.options.store!.setCooldown(
+                    key,
+                    decision.cooldownMs
+                  )
+                }
+
+                this.release({ isToPump: false })
+
+                item.attempt++
+                item.started = false
+                item.pinnedApiTargetId = undefined
+
+                if (item.signal?.aborted) {
+                  item.reject(new DOMException('Aborted', 'AbortError'))
+                  break
+                }
+
+                this.queue.unshift(item)
+
+                const delay = Math.max(0, decision.delayMs ?? 0)
+
+                if (delay > 0) {
+                  this.nextWakeUpAt = Date.now() + delay
+                  this.timer = setTimeout(() => this.pump(), delay)
+                } else {
+                  this.pump()
+                }
+
+                return
+              }
+
+              case 'cooldown':
+                await this.options.store!.setCooldown(
+                  key,
+                  Math.max(0, decision.cooldownMs)
+                )
+
+                if (
+                  decision.then === 'retry_same' ||
+                  decision.then === 'retry_other'
+                ) {
+                  this.release({ isToPump: false })
+
+                  item.attempt++
+                  item.started = false
+                  item.pinnedApiTargetId =
+                    decision.then === 'retry_same'
+                      ? apiTargetChosen.id
+                      : undefined
+
+                  if (item.signal?.aborted) {
+                    item.reject(new DOMException('Aborted', 'AbortError'))
+
+                    break
+                  }
+
+                  this.queue.unshift(item)
+
+                  const delay = decision.cooldownMs
+
+                  this.nextWakeUpAt = Date.now() + delay
+                  this.timer = setTimeout(() => this.pump(), delay)
+
+                  return
+                }
+
+                this.release({ isToPump: true })
+                item.reject(error)
+                break
+              default:
+                this.release({ isToPump: true })
+
+                item.reject(error)
+            }
+          })
+
+        if (this.active < this.options.maxConcurrent) {
+          this.timer = setTimeout(tryRun, 0)
+        }
+
+        return
+      }
+
       let waitMs = 0
       let allowed = false
 
@@ -286,9 +609,7 @@ export class RateLimiterBuilder {
          */
         if (this.storeErrorCount > 10) {
           while (this.queue.length) {
-            const item = this.queue.shift()!
-
-            item.reject(error)
+            this.queue.shift().reject(error)
           }
 
           throw error
@@ -307,9 +628,9 @@ export class RateLimiterBuilder {
         return
       }
 
-      const item = this.queue.shift()!
+      const item = this.queue.shift()
 
-      if (item.opts.signal?.aborted) {
+      if (item.signal?.aborted) {
         item.reject(new DOMException('Aborted', 'AbortError'))
 
         this.pump()
@@ -319,19 +640,105 @@ export class RateLimiterBuilder {
 
       item.started = true
 
-      if (item.opts.signal && item.abortHandler) {
-        item.opts.signal.removeEventListener('abort', item.abortHandler)
+      if (item.signal && item.abortHandler) {
+        item.signal.removeEventListener('abort', item.abortHandler)
         item.abortHandler = undefined
       }
 
       this.active++
 
       Promise.resolve()
-        .then(() => item.run(item.opts.signal))
-        .then(item.resolve, item.reject)
-        .finally(() => {
-          this.active--
-          this.pump()
+        .then(() => item.run({ signal: item.signal }))
+        .then(result => {
+          this.release({ isToPump: true })
+
+          item.resolve(result)
+        })
+        .catch(async error => {
+          if (!this.options.retryStrategy) {
+            this.release({ isToPump: true })
+
+            item.reject(error)
+
+            return
+          }
+
+          const ctx: RateLimitRetryCtx = {
+            error,
+            key: this.options.key,
+            attempt: item.attempt
+          }
+
+          const decision = await this.options.retryStrategy(ctx)
+
+          switch (decision.type) {
+            case 'retry_same':
+            case 'retry_other':
+              const delay = Math.max(0, decision.delayMs ?? 0)
+
+              this.release({ isToPump: false })
+
+              item.attempt++
+              item.started = false
+
+              if (item.signal?.aborted) {
+                item.reject(new DOMException('Aborted', 'AbortError'))
+                break
+              }
+
+              this.queue.unshift(item)
+
+              if (delay > 0) {
+                this.nextWakeUpAt = Date.now() + delay
+                this.timer = setTimeout(() => this.pump(), delay)
+              } else {
+                this.pump()
+              }
+
+              return
+
+            case 'cooldown': {
+              await this.options.store!.setCooldown(
+                this.options.key,
+                Math.max(0, decision.cooldownMs)
+              )
+
+              if (
+                decision.then === 'retry_same' ||
+                decision.then === 'retry_other'
+              ) {
+                const delay = decision.cooldownMs
+
+                this.release({ isToPump: false })
+
+                item.attempt++
+                item.started = false
+
+                if (item.signal?.aborted) {
+                  item.reject(new DOMException('Aborted', 'AbortError'))
+
+                  break
+                }
+
+                this.queue.unshift(item)
+                this.nextWakeUpAt = Date.now() + delay
+                this.timer = setTimeout(() => this.pump(), delay)
+
+                return
+              }
+
+              this.release({ isToPump: true })
+
+              item.reject(error)
+
+              break
+            }
+
+            default:
+              this.release({ isToPump: true })
+
+              item.reject(error)
+          }
         })
 
       if (this.active < this.options.maxConcurrent) {
@@ -352,5 +759,64 @@ export class RateLimiterBuilder {
     }
 
     return Math.floor(Math.random() * this.options.jitterMs)
+  }
+
+  /**
+   * Read the API Target selection strategy and defines which is
+   * going to be used.
+   */
+  private createIdxBySelectionStrategy(pinnedApiTargetId?: string) {
+    let indexes = []
+
+    switch (this.options.apiTargetSelectionStrategy) {
+      case 'round_robin':
+        indexes = this.createRoundRobinIdx()
+        break
+      case 'first_available':
+        indexes = this.createFirstAvailableIdx()
+        break
+      default:
+        indexes = this.createFirstAvailableIdx()
+    }
+
+    if (pinnedApiTargetId) {
+      const i = this.options.apiTargets.findIndex(
+        a => a.id === pinnedApiTargetId
+      )
+
+      if (i >= 0) {
+        indexes = [i, ...indexes.filter(x => x !== i)]
+      }
+    }
+
+    return indexes
+  }
+
+  /**
+   * Create the indexes for when using round_robin selection strategy.
+   */
+  private createRoundRobinIdx() {
+    return Array.from(
+      { length: this.options.apiTargets.length },
+      (_, k) => (this.rrIndex + k) % this.options.apiTargets.length
+    )
+  }
+
+  /**
+   * Create the indexes for when using first_available selection strategy.
+   */
+  private createFirstAvailableIdx() {
+    return Array.from({ length: this.options.apiTargets.length }, (_, k) => k)
+  }
+
+  /**
+   * Release the rate limit task.
+   */
+  private release(options: { isToPump: boolean }) {
+    this.active--
+
+    if (options.isToPump) {
+      this.pump()
+    }
   }
 }
