@@ -22,8 +22,8 @@ export type RateLimiterOptions = {
 
   /**
    * The logical key that will be used by store to save buckets.
-   * If targets are defined, it will be used as a prefix:
-   * `${key}:${target.baseUrl}`.
+   * If API Targers are defined, it will be used as a prefix from
+   * a hash created from API Targets metadata object: `${key}:${hash}`.
    */
   key?: string
 
@@ -36,7 +36,7 @@ export type RateLimiterOptions = {
   /**
    * The retry strategy for this rate limiter. This is useful to
    * give the power to the user when and how we should proceed with
-   * the retry of API Targets.
+   * the retry of failed executions.
    */
   retryStrategy?: RateLimitRetryClosure
 

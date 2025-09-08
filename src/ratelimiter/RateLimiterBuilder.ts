@@ -19,7 +19,8 @@ import type {
   RateLimitRetryDecision
 } from '#src/types'
 
-import { Macroable } from '@athenna/common'
+import { Config } from '@athenna/config'
+import { Json, String, Macroable } from '@athenna/common'
 import { RateLimitStore } from '#src/ratelimiter/RateLimitStore'
 import { MissingKeyException } from '#src/exceptions/MissingKeyException'
 import { MissingRuleException } from '#src/exceptions/MissingRuleException'
@@ -30,8 +31,8 @@ export class RateLimiterBuilder extends Macroable {
    * Holds the options that will be used to build the rate limiter.
    */
   private options: RateLimiterOptions = {
-    maxConcurrent: 1,
     jitterMs: 0,
+    maxConcurrent: 1,
     apiTargetSelectionStrategy: 'first_available'
   }
 
@@ -70,23 +71,21 @@ export class RateLimiterBuilder extends Macroable {
   private nextWakeUpAt: number = 0
 
   /**
-   * Cooldown per API Target for when an error happens.
+   * Create a custom id for an API Target by reading the metadata object.
+   * The object will always be sorted by keys.
    */
-  private cooldownUntil = new Map<string, number>()
+  private getApiTargetId(apiTarget: RateLimitApiTarget) {
+    return String.hash(JSON.stringify(Json.sort(apiTarget.metadata)), {
+      key: Config.get('app.key', 'ratelimiter')
+    })
+  }
 
   /**
-   * Map the key inside the store.
+   * Create a custom key for an API Target to be used to map the
+   * API Target rules into the cache.
    */
   private createApiTargetKey(apiTarget: RateLimitApiTarget) {
-    let host = ''
-
-    try {
-      host = new URL(apiTarget.baseUrl).host
-    } catch {
-      host = apiTarget.baseUrl
-    }
-
-    return `${this.options.key}:${host}:${apiTarget.id}`
+    return `${this.options.key}:${this.getApiTargetId(apiTarget)}`
   }
 
   /**
@@ -155,6 +154,10 @@ export class RateLimiterBuilder extends Macroable {
       this.options.apiTargets = []
     }
 
+    if (!apiTarget.id) {
+      apiTarget.id = this.getApiTargetId(apiTarget)
+    }
+
     this.options.apiTargets.push(apiTarget)
 
     return this
@@ -188,9 +191,13 @@ export class RateLimiterBuilder extends Macroable {
     return this
   }
 
+  /**
+   * Define the RateLmiter retry strategy. This is useful to control
+   * when and how we should proceed with the retry of API Targets.
+   */
   public retryStrategy(
     fn: (
-      ctx: RateLimitRetryCtx
+      ctx?: RateLimitRetryCtx
     ) => RateLimitRetryDecision | Promise<RateLimitRetryDecision>
   ) {
     this.options.retryStrategy = fn
@@ -261,7 +268,6 @@ export class RateLimiterBuilder extends Macroable {
     this.active = 0
     this.nextWakeUpAt = 0
     this.storeErrorCount = 0
-    this.cooldownUntil.clear()
 
     if (this.timer) {
       clearTimeout(this.timer)
@@ -297,9 +303,7 @@ export class RateLimiterBuilder extends Macroable {
       )
 
       if (missingRuleApiTargets.length) {
-        throw new MissingRuleException(
-          missingRuleApiTargets.map(t => t.baseUrl)
-        )
+        throw new MissingRuleException()
       }
     }
 
@@ -377,14 +381,8 @@ export class RateLimiterBuilder extends Macroable {
 
         for (const i of this.createIdxBySelectionStrategy(pinnedApiTargetId)) {
           const apiTarget = this.options.apiTargets[i]
-          const cooldown = this.cooldownUntil.get(apiTarget.id)
-
-          if (cooldown && cooldown > now) {
-            minWait = Math.min(minWait, cooldown - now)
-            continue
-          }
-
           const key = this.createApiTargetKey(apiTarget)
+
           const rules = apiTarget.rules?.length
             ? apiTarget.rules
             : this.options.rules
@@ -402,9 +400,9 @@ export class RateLimiterBuilder extends Macroable {
               }
 
               break
-            } else {
-              minWait = Math.min(minWait, res.waitMs)
             }
+
+            minWait = Math.min(minWait, res.waitMs)
           } catch (error) {
             this.storeErrorCount++
 
@@ -452,13 +450,13 @@ export class RateLimiterBuilder extends Macroable {
             item.run({ signal: item.signal, apiTarget: apiTargetChosen })
           )
           .then(result => {
-            this.release({ isToPump: true })
+            this.releaseTask({ isToPump: true })
 
             item.resolve(result)
           })
           .catch(async error => {
             if (!this.options.retryStrategy) {
-              this.release({ isToPump: true })
+              this.releaseTask({ isToPump: true })
 
               item.reject(error)
 
@@ -470,6 +468,7 @@ export class RateLimiterBuilder extends Macroable {
             const ctx: RateLimitRetryCtx = {
               key,
               error,
+              signal: item.signal,
               attempt: item.attempt,
               apiTarget: apiTargetChosen
             }
@@ -478,7 +477,7 @@ export class RateLimiterBuilder extends Macroable {
 
             switch (decision.type) {
               case 'retry_same':
-                this.release({ isToPump: false })
+                this.releaseTask({ isToPump: false })
 
                 item.attempt++
                 item.started = false
@@ -495,7 +494,7 @@ export class RateLimiterBuilder extends Macroable {
 
                 if (delay > 0) {
                   this.nextWakeUpAt = Date.now() + delay
-                  this.timer = setTimeout(() => this.pump(), delay)
+                  this.timer = setTimeout(tryRun, delay)
                 } else {
                   this.pump()
                 }
@@ -503,14 +502,13 @@ export class RateLimiterBuilder extends Macroable {
                 return
 
               case 'retry_other': {
-                if (decision.cooldownMs > 0) {
-                  await this.options.store!.setCooldown(
-                    key,
-                    decision.cooldownMs
-                  )
-                }
+                const cooldown = Math.max(0, decision.cooldownMs || 0)
 
-                this.release({ isToPump: false })
+                this.releaseTask({ isToPump: false })
+
+                if (cooldown > 0) {
+                  await this.options.store!.setCooldown(key, cooldown)
+                }
 
                 item.attempt++
                 item.started = false
@@ -527,7 +525,7 @@ export class RateLimiterBuilder extends Macroable {
 
                 if (delay > 0) {
                   this.nextWakeUpAt = Date.now() + delay
-                  this.timer = setTimeout(() => this.pump(), delay)
+                  this.timer = setTimeout(tryRun, delay)
                 } else {
                   this.pump()
                 }
@@ -536,17 +534,15 @@ export class RateLimiterBuilder extends Macroable {
               }
 
               case 'cooldown':
-                await this.options.store!.setCooldown(
-                  key,
-                  Math.max(0, decision.cooldownMs)
-                )
+                const ms = Math.max(0, decision.cooldownMs || 0)
 
-                if (
-                  decision.then === 'retry_same' ||
-                  decision.then === 'retry_other'
-                ) {
-                  this.release({ isToPump: false })
+                this.releaseTask({ isToPump: false })
 
+                await this.options.store!.setCooldown(key, ms)
+
+                const then = decision.then
+
+                if (then === 'retry_same' || then === 'retry_other') {
                   item.attempt++
                   item.started = false
                   item.pinnedApiTargetId =
@@ -565,16 +561,18 @@ export class RateLimiterBuilder extends Macroable {
                   const delay = decision.cooldownMs
 
                   this.nextWakeUpAt = Date.now() + delay
-                  this.timer = setTimeout(() => this.pump(), delay)
+                  this.timer = setTimeout(tryRun, delay)
 
                   return
                 }
 
-                this.release({ isToPump: true })
+                this.releaseTask({ isToPump: true })
+
                 item.reject(error)
+
                 break
               default:
-                this.release({ isToPump: true })
+                this.releaseTask({ isToPump: true })
 
                 item.reject(error)
             }
@@ -650,13 +648,13 @@ export class RateLimiterBuilder extends Macroable {
       Promise.resolve()
         .then(() => item.run({ signal: item.signal }))
         .then(result => {
-          this.release({ isToPump: true })
+          this.releaseTask({ isToPump: true })
 
           item.resolve(result)
         })
         .catch(async error => {
           if (!this.options.retryStrategy) {
-            this.release({ isToPump: true })
+            this.releaseTask({ isToPump: true })
 
             item.reject(error)
 
@@ -676,7 +674,7 @@ export class RateLimiterBuilder extends Macroable {
             case 'retry_other':
               const delay = Math.max(0, decision.delayMs ?? 0)
 
-              this.release({ isToPump: false })
+              this.releaseTask({ isToPump: false })
 
               item.attempt++
               item.started = false
@@ -690,7 +688,7 @@ export class RateLimiterBuilder extends Macroable {
 
               if (delay > 0) {
                 this.nextWakeUpAt = Date.now() + delay
-                this.timer = setTimeout(() => this.pump(), delay)
+                this.timer = setTimeout(tryRun, delay)
               } else {
                 this.pump()
               }
@@ -709,7 +707,7 @@ export class RateLimiterBuilder extends Macroable {
               ) {
                 const delay = decision.cooldownMs
 
-                this.release({ isToPump: false })
+                this.releaseTask({ isToPump: false })
 
                 item.attempt++
                 item.started = false
@@ -722,12 +720,12 @@ export class RateLimiterBuilder extends Macroable {
 
                 this.queue.unshift(item)
                 this.nextWakeUpAt = Date.now() + delay
-                this.timer = setTimeout(() => this.pump(), delay)
+                this.timer = setTimeout(tryRun, delay)
 
                 return
               }
 
-              this.release({ isToPump: true })
+              this.releaseTask({ isToPump: true })
 
               item.reject(error)
 
@@ -735,7 +733,7 @@ export class RateLimiterBuilder extends Macroable {
             }
 
             default:
-              this.release({ isToPump: true })
+              this.releaseTask({ isToPump: true })
 
               item.reject(error)
           }
@@ -773,8 +771,6 @@ export class RateLimiterBuilder extends Macroable {
         indexes = this.createRoundRobinIdx()
         break
       case 'first_available':
-        indexes = this.createFirstAvailableIdx()
-        break
       default:
         indexes = this.createFirstAvailableIdx()
     }
@@ -812,10 +808,16 @@ export class RateLimiterBuilder extends Macroable {
   /**
    * Release the rate limit task.
    */
-  private release(options: { isToPump: boolean }) {
+  private releaseTask(options: { isToPump: boolean }) {
     this.active--
 
     if (options.isToPump) {
+      if (this.timer) {
+        clearTimeout(this.timer)
+
+        this.timer = null
+      }
+
       this.pump()
     }
   }

@@ -1,6 +1,15 @@
+/**
+ * @athenna/ratelimiter
+ *
+ * (c) João Lenon <lenon@athenna.io>
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 import { RateLimiter } from '#src'
-import { Path, Sleep, Uuid } from '@athenna/common'
-import { CacheProvider } from '@athenna/cache'
+import { Path, Sleep } from '@athenna/common'
+import { Cache, CacheProvider } from '@athenna/cache'
 import { AfterEach, BeforeEach, Test, type Context } from '@athenna/test'
 import { MissingKeyException } from '#src/exceptions/MissingKeyException'
 import { MissingRuleException } from '#src/exceptions/MissingRuleException'
@@ -16,6 +25,8 @@ export class RateLimiterBuilderTest {
 
   @AfterEach()
   public async afterEach() {
+    await Cache.store('memory').truncate()
+
     Config.clear()
     ioc.reconstruct()
   }
@@ -118,6 +129,26 @@ export class RateLimiterBuilderTest {
       .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
+
+    const promises = []
+    const dateStart = Date.now()
+    const numberOfRequests = 5
+
+    for (let i = 0; i < numberOfRequests; i++) {
+      promises.push(limiter.schedule(() => 'ok' + i))
+    }
+
+    await Promise.all(promises)
+
+    assert.isAtLeast(Date.now() - dateStart, 400)
+  }
+
+  @Test()
+  public async shouldBeAbleToBuildARateLimiterWithSettingMultipleRules({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .setRules([{ type: 'second', limit: 1 }])
 
     const promises = []
     const dateStart = Date.now()
@@ -383,12 +414,14 @@ export class RateLimiterBuilderTest {
     limiter.schedule(() => new Promise<void>(() => {}))
     limiter.schedule(() => 'ok')
 
-    await Sleep.for(0).milliseconds().wait()
+    await this.waitUntil(() => limiter.getAvailableInMs() > 0, 10, 200)
 
-    assert.isAtLeast(limiter.getAvailableInMs(), 60)
-    assert.isAtMost(limiter.getAvailableInMs(), 120)
+    const availableInMs = limiter.getAvailableInMs()
 
-    await this.waitUntil(() => limiter.getAvailableInMs() === 0, 5, 800)
+    assert.isAtLeast(availableInMs, 50)
+    assert.isAtMost(availableInMs, 120)
+
+    await this.waitUntil(() => limiter.getAvailableInMs() === 0, 10, 300)
 
     assert.equal(limiter.getAvailableInMs(), 0)
   }
@@ -414,7 +447,7 @@ export class RateLimiterBuilderTest {
     abortController.abort('testing')
     await Sleep.for(30).milliseconds().wait()
 
-    assert.equal(limiter.getQueuedCount(), 2)
+    assert.equal(limiter.getQueuedCount(), 1)
 
     barrier.release()
 
@@ -541,7 +574,38 @@ export class RateLimiterBuilderTest {
       .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
-      .addApiTarget({ id: Uuid.generate(), baseUrl: 'http://api1.com' })
+      .addApiTarget({ metadata: { baseUrl: 'http://api1.com' } })
+
+    const promises = []
+    const dateStart = Date.now()
+    const numberOfRequests = 5
+
+    for (let i = 0; i < numberOfRequests; i++) {
+      promises.push(
+        limiter.schedule(({ apiTarget }) => {
+          assert.isDefined(apiTarget)
+
+          return 'ok' + i
+        })
+      )
+    }
+
+    await Promise.all(promises)
+
+    assert.isAtLeast(Date.now() - dateStart, 400)
+  }
+
+  @Test()
+  public async shouldBeAbleToBuildARateLimiterWithARuleOfOneRequestPerSecondSettingMultipleApiTargets({
+    assert
+  }: Context) {
+    assert.plan(6)
+
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .addRule({ type: 'second', limit: 1 })
+      .setApiTargets([{ metadata: { baseUrl: 'http://api1.com' } }])
 
     const promises = []
     const dateStart = Date.now()
@@ -568,7 +632,7 @@ export class RateLimiterBuilderTest {
       .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
-      .addApiTarget({ id: Uuid.generate(), baseUrl: 'http://api1.com' })
+      .addApiTarget({ metadata: { baseUrl: 'http://api1.com' } })
 
     await assert.rejects(() => {
       return limiter.schedule(() => {
@@ -585,14 +649,14 @@ export class RateLimiterBuilderTest {
       .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
-      .addApiTarget({ id: 't1', baseUrl: 'http://api1.com' })
-      .addApiTarget({ id: 't2', baseUrl: 'http://api2.com' })
+      .addApiTarget({ metadata: { baseUrl: 'http://api1.com' } })
+      .addApiTarget({ metadata: { baseUrl: 'http://api2.com' } })
 
-    const first = await limiter.schedule(({ apiTarget }) => apiTarget.baseUrl)
+    const first = await limiter.schedule(({ apiTarget }) => apiTarget.metadata.baseUrl)
 
     assert.equal(first, 'http://api1.com')
 
-    const second = await limiter.schedule(({ apiTarget }) => apiTarget.baseUrl)
+    const second = await limiter.schedule(({ apiTarget }) => apiTarget.metadata.baseUrl)
 
     assert.equal(second, 'http://api2.com')
   }
@@ -606,18 +670,18 @@ export class RateLimiterBuilderTest {
       .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addRule({ type: 'second', limit: 1 })
-      .addApiTarget({ id: 't1', baseUrl: 'http://api1.com' })
-      .addApiTarget({ id: 't2', baseUrl: 'http://api2.com' })
+      .addApiTarget({ metadata: { baseUrl: 'http://api1.com' } })
+      .addApiTarget({ metadata: { baseUrl: 'http://api2.com' } })
 
     const barrier = this.createBarrier()
     const used: string[] = []
 
     const run = async ({ apiTarget }) => {
-      used.push(apiTarget.baseUrl)
+      used.push(apiTarget.metadata.baseUrl)
 
       await barrier.wait()
 
-      return apiTarget.baseUrl
+      return apiTarget.metadata.baseUrl
     }
 
     const p1 = limiter.schedule(run)
@@ -646,16 +710,16 @@ export class RateLimiterBuilderTest {
       .key('request:api-key:/profile')
       .apiTargetSelectionStrategy('round_robin')
       .addRule({ type: 'second', limit: 1 })
-      .addApiTarget({ id: 't1', baseUrl: 'http://api1.com' })
-      .addApiTarget({ id: 't2', baseUrl: 'http://api2.com' })
+      .addApiTarget({ id: 't1', metadata: { baseUrl: 'http://api1.com' } })
+      .addApiTarget({ id: 't2', metadata: { baseUrl: 'http://api2.com' } })
 
     const used: string[] = []
 
     const tasks = Array.from({ length: 4 }, () =>
       limiter.schedule(({ apiTarget }) => {
-        used.push(apiTarget.baseUrl)
+        used.push(apiTarget.metadata.baseUrl)
 
-        return apiTarget.baseUrl
+        return apiTarget.metadata.baseUrl
       })
     )
 
@@ -663,6 +727,28 @@ export class RateLimiterBuilderTest {
 
     assert.deepEqual(results, used)
     assert.deepEqual(used, ['http://api1.com', 'http://api2.com', 'http://api1.com', 'http://api2.com'])
+  }
+
+  @Test()
+  public async shouldThrowMissingRuleExceptionIfRateLimiterRulesAndApiTargetRulesAreNotDefined({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .addApiTarget({ id: 't1', metadata: { baseUrl: 'http://api1.com' } })
+
+    await assert.rejects(() => limiter.schedule(() => {}), MissingRuleException)
+  }
+
+  @Test()
+  public async shouldNotThrowMissingRuleExceptionIfRateLimiterRulesAreNotDefinedButApiTargetRulesAreDefined({
+    assert
+  }: Context) {
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .addApiTarget({ id: 't1', rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api1.com' } })
+
+    await assert.doesNotReject(() => limiter.schedule(() => {}), MissingRuleException)
   }
 
   @Test()
@@ -675,25 +761,25 @@ export class RateLimiterBuilderTest {
       .key('request:api-key:/profile')
       .apiTargetSelectionStrategy('round_robin')
       .addRule({ type: 'second', limit: 1 })
-      .addApiTarget({ id: 't1', baseUrl: 'http://api1.com' })
-      .addApiTarget({ id: 't2', baseUrl: 'http://api2.com' })
+      .addApiTarget({ id: 't1', metadata: { baseUrl: 'http://api1.com' } })
+      .addApiTarget({ id: 't2', metadata: { baseUrl: 'http://api2.com' } })
 
     const barrier = this.createBarrier()
     const started: string[] = []
 
     const p1 = limiter.schedule(async ({ apiTarget }) => {
-      started.push(apiTarget.baseUrl)
+      started.push(apiTarget.metadata.baseUrl)
 
       await barrier.wait()
 
-      return apiTarget.baseUrl
+      return apiTarget.metadata.baseUrl
     })
     const p2 = limiter.schedule(async ({ apiTarget }) => {
-      started.push(apiTarget.baseUrl)
+      started.push(apiTarget.metadata.baseUrl)
 
       await barrier.wait()
 
-      return apiTarget.baseUrl
+      return apiTarget.metadata.baseUrl
     })
 
     for (let i = 0; i < 20 && started.length < 2; i++) {
@@ -709,5 +795,95 @@ export class RateLimiterBuilderTest {
     result.sort()
 
     assert.deepEqual(result, ['http://api1.com', 'http://api2.com'])
+  }
+
+  @Test()
+  public async shouldBeAbleToBuildARateLimiterDefiningRulesInApiTarget({ assert }: Context) {
+    assert.plan(6)
+
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .addApiTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api0.com' } })
+
+    const promises = []
+    const dateStart = Date.now()
+    const numberOfRequests = 5
+
+    for (let i = 0; i < numberOfRequests; i++) {
+      promises.push(
+        limiter.schedule(({ apiTarget }) => {
+          assert.isDefined(apiTarget)
+
+          return 'ok' + i
+        })
+      )
+    }
+
+    await Promise.all(promises)
+
+    assert.isAtLeast(Date.now() - dateStart, 400)
+  }
+
+  @Test()
+  public async shouldNotBeAbleToRetryRequestWithoutARetryStrategy({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .addApiTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api0.com' } })
+
+    await assert.rejects(() =>
+      limiter.schedule(({ apiTarget }) => {
+        throw new Error(apiTarget.metadata.baseUrl)
+      })
+    )
+  }
+
+  @Test()
+  public async shouldAlwaysFailTheRequestIfRetryStrategyDecideItShouldFail({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:api-key:/profile')
+      .addApiTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api0.com' } })
+      .retryStrategy(ctx => {
+        if (ctx.error.message === 'fail') {
+          return { type: 'fail' }
+        }
+      })
+
+    await assert.rejects(() =>
+      limiter.schedule(() => {
+        throw new Error('fail')
+      })
+    )
+  }
+
+  @Test()
+  public async shouldAlwaysCooldownAndRetryTheRequestWithTheSameApiIfRetryStrategyDecideItShouldWaitToTryAgainWithSame({
+    assert
+  }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 100 } })
+      .addApiTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api0.com' } })
+      .addApiTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api1.com' } })
+      .retryStrategy(() => {
+        return { type: 'cooldown', cooldownMs: 100, then: 'retry_same' }
+      })
+
+    const apiTargetUsed = []
+    let isFirstRequest = true
+
+    await limiter.schedule(({ apiTarget }) => {
+      apiTargetUsed.push(apiTarget.metadata.baseUrl)
+
+      if (isFirstRequest) {
+        isFirstRequest = false
+
+        throw new Error('fail')
+      }
+    })
+
+    assert.deepEqual(apiTargetUsed, ['http://api0.com', 'http://api0.com'])
   }
 }

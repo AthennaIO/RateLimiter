@@ -13,7 +13,12 @@ export type RateLimitRetryCtx = {
   /**
    * The error that has happened while trying to make the request.
    */
-  error: unknown
+  error: Error
+
+  /**
+   * The abort signal to abort the entire process when needed.
+   */
+  signal?: AbortSignal
 
   /**
    * The cache key that was used to store the rate limit rules.

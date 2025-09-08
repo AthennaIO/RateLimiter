@@ -10,18 +10,10 @@
 import { Exception } from '@athenna/common'
 
 export class MissingRuleException extends Exception {
-  public constructor(apiTargets?: string[]) {
-    let message = 'Missing rules value for rate limiter.'
-    let help =
-      'This error happens when you forget to define rules for your RateLimiter instance.'
-
-    if (apiTargets) {
-      message = `Missing rules value for your API Targets: ${apiTargets.join(
-        ', '
-      )}`
-      help =
-        'This error happens when you forget to define rules for you API Target or for your RateLimtier instance. You have two options, define a custom rule for all your API Targets or define a default rule in your RateLimiter to be used by default by API Targets.'
-    }
+  public constructor() {
+    const message = 'Missing rules value for rate limiter and API Targets.'
+    const help =
+      'This error happens when you forget to define default rules for your RateLimiter instance and custom rules by API Target. You has two options, define a default rule in your RateLimiter that will be used by API Targets that does not have a rule or define a custom rule for all your API Targets.'
 
     super({
       code: 'E_MISSING_RULE_ERROR',

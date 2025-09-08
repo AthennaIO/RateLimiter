@@ -1,5 +1,5 @@
 /**
- * @athenna/queue
+ * @athenna/cache
  *
  * (c) João Lenon <lenon@athenna.io>
  *

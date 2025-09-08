@@ -10,6 +10,13 @@
 import type { RateLimitApiTarget } from '#src/types'
 
 export type RateLimitScheduleCtx = {
+  /**
+   * The abort signal to abort the entire process when needed.
+   */
   signal?: AbortSignal
+
+  /**
+   * The API Target that this retry is currently using.
+   */
   apiTarget?: RateLimitApiTarget
 }

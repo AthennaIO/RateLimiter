@@ -11,27 +11,24 @@ import type { RateLimitRule } from '#src/types'
 
 export type RateLimitApiTarget = {
   /**
-   * The rate limit target ID. Useful for logs and metrics
-   * and to create a unique key in your store only for this
-   * API Target.
+   * The rate limit target ID. By default this will be created by creating
+   * a hash from the API Target metadata object, but you can also define your
+   * own ID.
    */
-  id: string
+  id?: string
 
   /**
-   * API target base URL that will be used to fetch the request.
+   * Define all the metadata for this API target to function. Metadata
+   * is required because we are going to create a hash from this object
+   * to store the rules inside the cache by ApiTarget. With this
+   * implementation you can create not only API rotations but also API
+   * Keys rotations at the same time.
    */
-  baseUrl: string
+  metadata: Record<string, any>
 
   /**
    * Custom rate limit rules for this API target. If not defined,
    * the default defined in RateLimiter will be used.
    */
   rules?: RateLimitRule[]
-
-  /**
-   * Define any kind of metadata for this API target. Metadata is
-   * useful to define informations such as API Keys to not only
-   * create API rotations but API Keys rotations at the same time.
-   */
-  metadata?: Record<string, any>
 }

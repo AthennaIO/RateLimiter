@@ -51,7 +51,7 @@
   },
   "devDependencies": {
     "@athenna/cache": "^5.2.0",
-    "@athenna/common": "^5.18.0",
+    "@athenna/common": "^5.19.0",
     "@athenna/config": "^5.4.0",
     "@athenna/ioc": "^5.2.0",
     "@athenna/logger": "^5.10.0",
