@@ -1,5 +1,5 @@
 /**
- * @athenna/queue
+ * @athenna/ratelimiter
  *
  * (c) João Lenon <lenon@athenna.io>
  *
