@@ -309,7 +309,7 @@ export class RateLimiterBuilderTest {
       limiter.schedule(() => 'ok' + i)
     }
 
-    limiter.truncate()
+    await limiter.truncate()
 
     assert.equal(limiter.getActiveCount(), 0)
     assert.equal(limiter.getQueuedCount(), 0)
@@ -330,8 +330,6 @@ export class RateLimiterBuilderTest {
     }
 
     assert.equal(limiter.getQueuedCount(), 5)
-
-    limiter.truncate()
   }
 
   @Test()
@@ -845,10 +843,8 @@ export class RateLimiterBuilderTest {
       .store('memory', { windowMs: { second: 100 } })
       .key('request:api-key:/profile')
       .addApiTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api0.com' } })
-      .retryStrategy(ctx => {
-        if (ctx.error.message === 'fail') {
-          return { type: 'fail' }
-        }
+      .retryStrategy(() => {
+        return { type: 'fail' }
       })
 
     await assert.rejects(() =>
@@ -856,6 +852,35 @@ export class RateLimiterBuilderTest {
         throw new Error('fail')
       })
     )
+  }
+
+  @Test()
+  public async shouldAlwaysRetryTheRequestWithTheSameApiIfRetryStrategyDecideItShouldRetryWithTheSame({
+    assert
+  }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 100 } })
+      .addApiTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api0.com' } })
+      .addApiTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api1.com' } })
+      .retryStrategy(() => {
+        return { type: 'retry_same' }
+      })
+
+    const apiTargetUsed = []
+    let isFirstRequest = true
+
+    await limiter.schedule(({ apiTarget }) => {
+      apiTargetUsed.push(apiTarget.metadata.baseUrl)
+
+      if (isFirstRequest) {
+        isFirstRequest = false
+
+        throw new Error('fail')
+      }
+    })
+
+    assert.deepEqual(apiTargetUsed, ['http://api0.com', 'http://api0.com'])
   }
 
   @Test()

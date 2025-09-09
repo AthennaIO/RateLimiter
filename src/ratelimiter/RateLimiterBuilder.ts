@@ -20,8 +20,8 @@ import type {
 } from '#src/types'
 
 import { Config } from '@athenna/config'
-import { Json, String, Macroable } from '@athenna/common'
 import { RateLimitStore } from '#src/ratelimiter/RateLimitStore'
+import { Json, String, Macroable, Options } from '@athenna/common'
 import { MissingKeyException } from '#src/exceptions/MissingKeyException'
 import { MissingRuleException } from '#src/exceptions/MissingRuleException'
 import { MissingStoreException } from '#src/exceptions/MissingStoreException'
@@ -71,25 +71,17 @@ export class RateLimiterBuilder extends Macroable {
   private nextWakeUpAt: number = 0
 
   /**
-   * Create a custom id for an API Target by reading the metadata object.
-   * The object will always be sorted by keys.
-   */
-  private getApiTargetId(apiTarget: RateLimitApiTarget) {
-    return String.hash(JSON.stringify(Json.sort(apiTarget.metadata)), {
-      key: Config.get('app.key', 'ratelimiter')
-    })
-  }
-
-  /**
-   * Create a custom key for an API Target to be used to map the
-   * API Target rules into the cache.
-   */
-  private createApiTargetKey(apiTarget: RateLimitApiTarget) {
-    return `${this.options.key}:${this.getApiTargetId(apiTarget)}`
-  }
-
-  /**
    * Logical key that will be used by store to save buckets.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .addRule({ type: 'second', limit: 1 })
+   *   .key('request:/profile')
+   *
+   * await limiter.schedule(() => {...})
+   * ```
    */
   public key(value: string) {
     this.options.key = value
@@ -100,6 +92,16 @@ export class RateLimiterBuilder extends Macroable {
   /**
    * Define the store that will be responsible to save the
    * rate limit buckets.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .key('request:/profile')
+   *   .addRule({ type: 'second', limit: 1 })
+   *   .store('memory')
+   *
+   * await limiter.schedule(() => {...})
+   * ```
    */
   public store(
     store: 'memory' | 'redis' | string,
@@ -116,6 +118,17 @@ export class RateLimiterBuilder extends Macroable {
 
   /**
    * Set the max number of tasks that could run concurrently.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *   .addRule({ type: 'second', limit: 1 })
+   *   .maxConcurrent(10)
+   *
+   * await limiter.schedule(() => {...})
+   * ```
    */
   public maxConcurrent(value: number) {
     this.options.maxConcurrent = Math.max(1, value ?? 1)
@@ -126,6 +139,17 @@ export class RateLimiterBuilder extends Macroable {
   /**
    * Random jitter in milliseconds to avoid thundering herd in
    * distributed environments.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *   .addRule({ type: 'second', limit: 1 })
+   *   .randomJitter(1000)
+   *
+   * await limiter.schedule(() => {...})
+   * ```
    */
   public jitterMs(value: number) {
     this.options.jitterMs = Math.max(0, value ?? 0)
@@ -135,6 +159,16 @@ export class RateLimiterBuilder extends Macroable {
 
   /**
    * Add a new rate limit rule.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *   .addRule({ type: 'second', limit: 1 })
+   *
+   * await limiter.schedule(() => {...})
+   * ```
    */
   public addRule(rule: RateLimitRule) {
     if (!this.options.rules) {
@@ -148,6 +182,17 @@ export class RateLimiterBuilder extends Macroable {
 
   /**
    * Add a new rate limit API target.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *   .addRule({ type: 'second', limit: 1 })
+   *   .addApiTarget({ metadata: { baseUrl: 'http://example.com' } })
+   *
+   * await limiter.schedule(() => {...})
+   * ```
    */
   public addApiTarget(apiTarget: RateLimitApiTarget) {
     if (!this.options.apiTargets) {
@@ -165,6 +210,16 @@ export class RateLimiterBuilder extends Macroable {
 
   /**
    * Set multiple rate limit rules with one method call.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *   .setRules([{ type: 'second', limit: 1 }])
+   *
+   * await limiter.schedule(() => {...})
+   * ```
    */
   public setRules(rules: RateLimitRule[]) {
     rules.forEach(rule => this.addRule(rule))
@@ -174,6 +229,17 @@ export class RateLimiterBuilder extends Macroable {
 
   /**
    * Set multiple rate limit API targets with one method call.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *   .addRule({ type: 'second', limit: 1 })
+   *   .setApiTargets([{ metadata: { baseUrl: 'http://example.com' } }])
+   *
+   * await limiter.schedule(() => {...})
+   * ```
    */
   public setApiTargets(apiTargets: RateLimitApiTarget[]) {
     apiTargets.forEach(apiTarget => this.addApiTarget(apiTarget))
@@ -183,7 +249,19 @@ export class RateLimiterBuilder extends Macroable {
 
   /**
    * Define the API target selection strategy that will be used
-   * to select the next one when an API fails.
+   * to select the next one when an API Target fails.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *   .addRule({ type: 'second', limit: 1 })
+   *   .addApiTarget({ metadata: { baseUrl: 'http://example.com' } })
+   *   .apiTargetSelectionStrategy('round_robin')
+   *
+   * await limiter.schedule(() => {...})
+   * ```
    */
   public apiTargetSelectionStrategy(value: 'first_available' | 'round_robin') {
     this.options.apiTargetSelectionStrategy = value
@@ -193,7 +271,29 @@ export class RateLimiterBuilder extends Macroable {
 
   /**
    * Define the RateLmiter retry strategy. This is useful to control
-   * when and how we should proceed with the retry of API Targets.
+   * when and how we should proceed with the retry of tasks that failed
+   * to execute.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *   .addRule({ type: 'second', limit: 1 })
+   *   .retryStrategy(({ attempt }) => {
+   *     const decision = { type: 'fail' }
+   *
+   *     if (attempt === 3) {
+   *       return decision
+   *     }
+   *
+   *     decision.type = 'retry_same'
+   *
+   *     return decision
+   *   })
+   *
+   * await limiter.schedule(() => {...})
+   * ```
    */
   public retryStrategy(
     fn: (
@@ -261,9 +361,20 @@ export class RateLimiterBuilder extends Macroable {
   }
 
   /**
-   * Drop all the tasks that are in the queue.
+   * Drop all the tasks that are in the queue and clear
+   * store.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *   .addRule({ type: 'second', limit: 1 })
+   *
+   * await limiter.truncate()
+   * ```
    */
-  public truncate() {
+  public async truncate() {
     this.queue = []
     this.active = 0
     this.nextWakeUpAt = 0
@@ -274,12 +385,26 @@ export class RateLimiterBuilder extends Macroable {
       this.timer = null
     }
 
+    await this.options.store.truncate()
+
     return this
   }
 
   /**
    * Schedule the execution of an async function respecting
-   * the rate limit rules.
+   * the rate limit rules and the API Targets.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *   .addRule({ type: 'second', limit: 1 })
+   *
+   * const response = await limiter.schedule(() => {
+   *   return fetch('http://example.com')
+   * })
+   * ```
    */
   public schedule<T = any>(
     closure: (ctx: RateLimitScheduleCtx) => T | Promise<T>,
@@ -347,404 +472,26 @@ export class RateLimiterBuilder extends Macroable {
         item.abortHandler = onAbort
       }
 
-      this.pump()
+      this.scheduleQueueItemRun()
     })
   }
 
   /**
-   * Process the queue of tasks.
+   * Create a custom id for an API Target by reading the metadata object.
+   * The object will always be sorted by keys.
    */
-  private pump() {
-    if (this.timer) {
-      return
-    }
-
-    const tryRun = async () => {
-      this.timer = null
-
-      if (this.active >= this.options.maxConcurrent) {
-        return
-      }
-
-      if (this.queue.length === 0) {
-        return
-      }
-
-      const now = Date.now()
-
-      if (this.options.apiTargets?.length) {
-        let minWait = Number.POSITIVE_INFINITY
-        let apiTargetChosen: RateLimitApiTarget = null
-
-        const nextItem = this.queue[0]
-        const pinnedApiTargetId = nextItem?.pinnedApiTargetId
-
-        for (const i of this.createIdxBySelectionStrategy(pinnedApiTargetId)) {
-          const apiTarget = this.options.apiTargets[i]
-          const key = this.createApiTargetKey(apiTarget)
-
-          const rules = apiTarget.rules?.length
-            ? apiTarget.rules
-            : this.options.rules
-
-          try {
-            const res = await this.options.store.tryReserve(key, rules)
-
-            this.storeErrorCount = 0
-
-            if (res.allowed) {
-              apiTargetChosen = apiTarget
-
-              if (this.options.apiTargetSelectionStrategy === 'round_robin') {
-                this.rrIndex = (i + 1) % this.options.apiTargets.length
-              }
-
-              break
-            }
-
-            minWait = Math.min(minWait, res.waitMs)
-          } catch (error) {
-            this.storeErrorCount++
-
-            if (this.storeErrorCount > 10) {
-              while (this.queue.length) {
-                this.queue.shift().reject(error)
-              }
-
-              throw error
-            }
-
-            minWait = Math.min(minWait, 100)
-          }
-        }
-
-        if (!apiTargetChosen) {
-          const delay =
-            (isFinite(minWait) ? minWait : 100) + this.randomJitter()
-
-          this.nextWakeUpAt = now + delay
-          this.timer = setTimeout(tryRun, delay)
-
-          return
-        }
-
-        const item = this.queue.shift()
-
-        if (item.signal?.aborted) {
-          item.reject(new DOMException('Aborted', 'AbortError'))
-          this.pump()
-          return
-        }
-
-        item.started = true
-
-        if (item.signal && item.abortHandler) {
-          item.signal.removeEventListener('abort', item.abortHandler)
-          item.abortHandler = undefined
-        }
-
-        this.active++
-
-        Promise.resolve()
-          .then(() =>
-            item.run({ signal: item.signal, apiTarget: apiTargetChosen })
-          )
-          .then(result => {
-            this.releaseTask({ isToPump: true })
-
-            item.resolve(result)
-          })
-          .catch(async error => {
-            if (!this.options.retryStrategy) {
-              this.releaseTask({ isToPump: true })
-
-              item.reject(error)
-
-              return
-            }
-
-            const key = this.createApiTargetKey(apiTargetChosen)
-
-            const ctx: RateLimitRetryCtx = {
-              key,
-              error,
-              signal: item.signal,
-              attempt: item.attempt,
-              apiTarget: apiTargetChosen
-            }
-
-            const decision = await this.options.retryStrategy(ctx)
-
-            switch (decision.type) {
-              case 'retry_same':
-                this.releaseTask({ isToPump: false })
-
-                item.attempt++
-                item.started = false
-                item.pinnedApiTargetId = apiTargetChosen.id
-
-                if (item.signal?.aborted) {
-                  item.reject(new DOMException('Aborted', 'AbortError'))
-                  break
-                }
-
-                this.queue.unshift(item)
-
-                const delay = Math.max(0, decision.delayMs ?? 0)
-
-                if (delay > 0) {
-                  this.nextWakeUpAt = Date.now() + delay
-                  this.timer = setTimeout(tryRun, delay)
-                } else {
-                  this.pump()
-                }
-
-                return
-
-              case 'retry_other': {
-                const cooldown = Math.max(0, decision.cooldownMs || 0)
-
-                this.releaseTask({ isToPump: false })
-
-                if (cooldown > 0) {
-                  await this.options.store!.setCooldown(key, cooldown)
-                }
-
-                item.attempt++
-                item.started = false
-                item.pinnedApiTargetId = undefined
-
-                if (item.signal?.aborted) {
-                  item.reject(new DOMException('Aborted', 'AbortError'))
-                  break
-                }
-
-                this.queue.unshift(item)
-
-                const delay = Math.max(0, decision.delayMs ?? 0)
-
-                if (delay > 0) {
-                  this.nextWakeUpAt = Date.now() + delay
-                  this.timer = setTimeout(tryRun, delay)
-                } else {
-                  this.pump()
-                }
-
-                return
-              }
-
-              case 'cooldown':
-                const ms = Math.max(0, decision.cooldownMs || 0)
-
-                this.releaseTask({ isToPump: false })
-
-                await this.options.store!.setCooldown(key, ms)
-
-                const then = decision.then
-
-                if (then === 'retry_same' || then === 'retry_other') {
-                  item.attempt++
-                  item.started = false
-                  item.pinnedApiTargetId =
-                    decision.then === 'retry_same'
-                      ? apiTargetChosen.id
-                      : undefined
-
-                  if (item.signal?.aborted) {
-                    item.reject(new DOMException('Aborted', 'AbortError'))
-
-                    break
-                  }
-
-                  this.queue.unshift(item)
-
-                  const delay = decision.cooldownMs
-
-                  this.nextWakeUpAt = Date.now() + delay
-                  this.timer = setTimeout(tryRun, delay)
-
-                  return
-                }
-
-                this.releaseTask({ isToPump: true })
-
-                item.reject(error)
-
-                break
-              default:
-                this.releaseTask({ isToPump: true })
-
-                item.reject(error)
-            }
-          })
-
-        if (this.active < this.options.maxConcurrent) {
-          this.timer = setTimeout(tryRun, 0)
-        }
-
-        return
-      }
-
-      let waitMs = 0
-      let allowed = false
-
-      try {
-        const res = await this.options.store.tryReserve(
-          this.options.key,
-          this.options.rules
-        )
-
-        this.storeErrorCount = 0
-        allowed = res.allowed
-        waitMs = res.waitMs
-      } catch (error) {
-        this.storeErrorCount++
-
-        /**
-         * If the store failed 10 times it means it is not working for some
-         * reason, in this case we can reject all the requests that are in
-         * the queue.
-         */
-        if (this.storeErrorCount > 10) {
-          while (this.queue.length) {
-            this.queue.shift().reject(error)
-          }
-
-          throw error
-        }
-
-        allowed = false
-        waitMs = 100
-      }
-
-      if (!allowed) {
-        const delay = waitMs + this.randomJitter()
-
-        this.nextWakeUpAt = now + delay
-        this.timer = setTimeout(tryRun, delay)
-
-        return
-      }
-
-      const item = this.queue.shift()
-
-      if (item.signal?.aborted) {
-        item.reject(new DOMException('Aborted', 'AbortError'))
-
-        this.pump()
-
-        return
-      }
-
-      item.started = true
-
-      if (item.signal && item.abortHandler) {
-        item.signal.removeEventListener('abort', item.abortHandler)
-        item.abortHandler = undefined
-      }
-
-      this.active++
-
-      Promise.resolve()
-        .then(() => item.run({ signal: item.signal }))
-        .then(result => {
-          this.releaseTask({ isToPump: true })
-
-          item.resolve(result)
-        })
-        .catch(async error => {
-          if (!this.options.retryStrategy) {
-            this.releaseTask({ isToPump: true })
-
-            item.reject(error)
-
-            return
-          }
-
-          const ctx: RateLimitRetryCtx = {
-            error,
-            key: this.options.key,
-            attempt: item.attempt
-          }
-
-          const decision = await this.options.retryStrategy(ctx)
-
-          switch (decision.type) {
-            case 'retry_same':
-            case 'retry_other':
-              const delay = Math.max(0, decision.delayMs ?? 0)
-
-              this.releaseTask({ isToPump: false })
-
-              item.attempt++
-              item.started = false
-
-              if (item.signal?.aborted) {
-                item.reject(new DOMException('Aborted', 'AbortError'))
-                break
-              }
-
-              this.queue.unshift(item)
-
-              if (delay > 0) {
-                this.nextWakeUpAt = Date.now() + delay
-                this.timer = setTimeout(tryRun, delay)
-              } else {
-                this.pump()
-              }
-
-              return
-
-            case 'cooldown': {
-              await this.options.store!.setCooldown(
-                this.options.key,
-                Math.max(0, decision.cooldownMs)
-              )
-
-              if (
-                decision.then === 'retry_same' ||
-                decision.then === 'retry_other'
-              ) {
-                const delay = decision.cooldownMs
-
-                this.releaseTask({ isToPump: false })
-
-                item.attempt++
-                item.started = false
-
-                if (item.signal?.aborted) {
-                  item.reject(new DOMException('Aborted', 'AbortError'))
-
-                  break
-                }
-
-                this.queue.unshift(item)
-                this.nextWakeUpAt = Date.now() + delay
-                this.timer = setTimeout(tryRun, delay)
-
-                return
-              }
-
-              this.releaseTask({ isToPump: true })
-
-              item.reject(error)
-
-              break
-            }
-
-            default:
-              this.releaseTask({ isToPump: true })
-
-              item.reject(error)
-          }
-        })
-
-      if (this.active < this.options.maxConcurrent) {
-        this.timer = setTimeout(tryRun, 0)
-      }
-    }
-
-    this.timer = setTimeout(tryRun, 0)
+  private getApiTargetId(apiTarget: RateLimitApiTarget) {
+    return String.hash(JSON.stringify(Json.sort(apiTarget.metadata)), {
+      key: Config.get('app.key', 'ratelimiter')
+    })
+  }
+
+  /**
+   * Create a custom key for an API Target to be used to map the
+   * API Target rules into the cache.
+   */
+  private createApiTargetKey(apiTarget: RateLimitApiTarget) {
+    return `${this.options.key}:${this.getApiTargetId(apiTarget)}`
   }
 
   /**
@@ -764,6 +511,16 @@ export class RateLimiterBuilder extends Macroable {
    * going to be used.
    */
   private createIdxBySelectionStrategy(pinnedApiTargetId?: string) {
+    if (pinnedApiTargetId) {
+      const i = this.options.apiTargets.findIndex(
+        a => a.id === pinnedApiTargetId
+      )
+
+      if (i >= 0) {
+        return [i]
+      }
+    }
+
     let indexes = []
 
     switch (this.options.apiTargetSelectionStrategy) {
@@ -773,16 +530,6 @@ export class RateLimiterBuilder extends Macroable {
       case 'first_available':
       default:
         indexes = this.createFirstAvailableIdx()
-    }
-
-    if (pinnedApiTargetId) {
-      const i = this.options.apiTargets.findIndex(
-        a => a.id === pinnedApiTargetId
-      )
-
-      if (i >= 0) {
-        indexes = [i, ...indexes.filter(x => x !== i)]
-      }
     }
 
     return indexes
@@ -808,17 +555,442 @@ export class RateLimiterBuilder extends Macroable {
   /**
    * Release the rate limit task.
    */
-  private releaseTask(options: { isToPump: boolean }) {
+  private releaseTask(options: { isToScheduleTick: boolean }) {
     this.active--
 
-    if (options.isToPump) {
+    if (options.isToScheduleTick) {
       if (this.timer) {
         clearTimeout(this.timer)
 
         this.timer = null
       }
 
-      this.pump()
+      this.scheduleQueueItemRun()
+    }
+  }
+
+  /**
+   * Try process an item from the queue of tasks.
+   */
+  private tryToRunQueueItem = async () => {
+    this.timer = null
+
+    if (this.active >= this.options.maxConcurrent) {
+      return
+    }
+
+    if (this.queue.length === 0) {
+      return
+    }
+
+    const now = Date.now()
+
+    if (this.options.apiTargets?.length) {
+      let minWait = Number.POSITIVE_INFINITY
+      let apiTarget: RateLimitApiTarget = null
+
+      const nextItem = this.queue[0]
+      const pinnedApiTargetId = nextItem?.pinnedApiTargetId
+
+      for (const i of this.createIdxBySelectionStrategy(pinnedApiTargetId)) {
+        const key = this.createApiTargetKey(this.options.apiTargets[i])
+
+        const rules = this.options.apiTargets[i].rules?.length
+          ? this.options.apiTargets[i].rules
+          : this.options.rules
+
+        try {
+          const res = await this.options.store.tryReserve(key, rules)
+
+          this.storeErrorCount = 0
+
+          if (res.allowed) {
+            apiTarget = this.options.apiTargets[i]
+
+            if (this.options.apiTargetSelectionStrategy === 'round_robin') {
+              this.rrIndex = (i + 1) % this.options.apiTargets.length
+            }
+
+            break
+          }
+
+          minWait = Math.min(minWait, res.waitMs)
+        } catch (error) {
+          this.storeErrorCount++
+
+          if (this.storeErrorCount > 10) {
+            while (this.queue.length) {
+              this.queue.shift().reject(error)
+            }
+
+            throw error
+          }
+
+          minWait = Math.min(minWait, 100)
+        }
+      }
+
+      if (!apiTarget) {
+        const delay = (isFinite(minWait) ? minWait : 100) + this.randomJitter()
+
+        this.nextWakeUpAt = now + delay
+        this.scheduleQueueItemRun({ delay })
+
+        return
+      }
+
+      const item = this.queue.shift()
+
+      if (item.signal?.aborted) {
+        item.reject(new DOMException('Aborted', 'AbortError'))
+
+        this.scheduleQueueItemRun()
+
+        return
+      }
+
+      item.started = true
+
+      if (item.signal && item.abortHandler) {
+        item.signal.removeEventListener('abort', item.abortHandler)
+        item.abortHandler = undefined
+      }
+
+      this.active++
+
+      Promise.resolve()
+        .then(() => item.run({ signal: item.signal, apiTarget }))
+        .then(result => {
+          this.releaseTask({ isToScheduleTick: true })
+
+          item.resolve(result)
+        })
+        .catch(error => this.onFailInMultiMode({ error, item, apiTarget }))
+
+      if (this.active < this.options.maxConcurrent) {
+        this.scheduleQueueItemRun()
+      }
+
+      return
+    }
+
+    let waitMs = 0
+    let allowed = false
+
+    try {
+      const res = await this.options.store.tryReserve(
+        this.options.key,
+        this.options.rules
+      )
+
+      this.storeErrorCount = 0
+
+      allowed = res.allowed
+      waitMs = res.waitMs
+    } catch (error) {
+      this.storeErrorCount++
+
+      /**
+       * If the store failed 10 times it means it is not working for some
+       * reason, in this case we can reject all the requests that are in
+       * the queue.
+       */
+      if (this.storeErrorCount > 10) {
+        while (this.queue.length) {
+          this.queue.shift().reject(error)
+        }
+
+        throw error
+      }
+
+      allowed = false
+      waitMs = 100
+    }
+
+    if (!allowed) {
+      const delay = waitMs + this.randomJitter()
+
+      this.nextWakeUpAt = now + delay
+      this.scheduleQueueItemRun({ delay })
+
+      return
+    }
+
+    const item = this.queue.shift()
+
+    if (item.signal?.aborted) {
+      item.reject(new DOMException('Aborted', 'AbortError'))
+
+      this.scheduleQueueItemRun()
+
+      return
+    }
+
+    item.started = true
+
+    if (item.signal && item.abortHandler) {
+      item.signal.removeEventListener('abort', item.abortHandler)
+      item.abortHandler = undefined
+    }
+
+    this.active++
+
+    Promise.resolve()
+      .then(() => item.run({ signal: item.signal }))
+      .then(result => {
+        this.releaseTask({ isToScheduleTick: true })
+
+        item.resolve(result)
+      })
+      .catch(error => this.onFailInSingleMode({ error, item }))
+
+    if (this.active < this.options.maxConcurrent) {
+      this.scheduleQueueItemRun()
+    }
+  }
+
+  /**
+   * Schedule to run another queue item.
+   */
+  private scheduleQueueItemRun = (options?: { delay?: number }) => {
+    options = Options.create(options, {
+      delay: 0
+    })
+
+    if (this.timer) {
+      return
+    }
+
+    const fire = async () => {
+      this.timer = null
+
+      await this.tryToRunQueueItem()
+    }
+
+    this.timer = setTimeout(fire, options.delay)
+  }
+
+  /**
+   * Closure that deals with all the errors that happens when when running
+   * RateLimiter in single-mode.
+   */
+  private onFailInSingleMode = async (options: {
+    error: Error
+    item: QueueItem<any>
+  }) => {
+    if (!this.options.retryStrategy) {
+      this.releaseTask({ isToScheduleTick: true })
+
+      options.item.reject(options.error)
+
+      return
+    }
+
+    const ctx: RateLimitRetryCtx = {
+      error: options.error,
+      key: this.options.key,
+      attempt: options.item.attempt
+    }
+
+    const decision = await this.options.retryStrategy(ctx)
+
+    switch (decision.type) {
+      case 'retry_same':
+      case 'retry_other':
+        const delay = Math.max(0, decision.delayMs ?? 0)
+
+        this.releaseTask({ isToScheduleTick: false })
+
+        options.item.attempt++
+        options.item.started = false
+
+        if (options.item.signal?.aborted) {
+          options.item.reject(new DOMException('Aborted', 'AbortError'))
+
+          break
+        }
+
+        this.queue.unshift(options.item)
+
+        if (delay > 0) {
+          this.nextWakeUpAt = Date.now() + delay
+          this.scheduleQueueItemRun({ delay })
+        } else {
+          this.scheduleQueueItemRun()
+        }
+
+        return
+
+      case 'cooldown': {
+        await this.options.store!.setCooldown(
+          this.options.key,
+          Math.max(0, decision.cooldownMs)
+        )
+
+        if (decision.then === 'retry_same' || decision.then === 'retry_other') {
+          const delay = decision.cooldownMs
+
+          this.releaseTask({ isToScheduleTick: false })
+
+          options.item.attempt++
+          options.item.started = false
+
+          if (options.item.signal?.aborted) {
+            options.item.reject(new DOMException('Aborted', 'AbortError'))
+
+            break
+          }
+
+          this.queue.unshift(options.item)
+          this.nextWakeUpAt = Date.now() + delay
+          this.scheduleQueueItemRun({ delay })
+
+          return
+        }
+
+        this.releaseTask({ isToScheduleTick: true })
+
+        options.item.reject(options.error)
+
+        break
+      }
+
+      default:
+        this.releaseTask({ isToScheduleTick: true })
+
+        options.item.reject(options.error)
+    }
+  }
+
+  /**
+   * Closure that deals with all the errors that happens when when running
+   * RateLimiter in multi-mode.
+   */
+  private onFailInMultiMode = async (options: {
+    error: Error
+    item: QueueItem<any>
+    apiTarget: RateLimitApiTarget
+  }) => {
+    if (!this.options.retryStrategy) {
+      this.releaseTask({ isToScheduleTick: true })
+
+      options.item.reject(options.error)
+
+      return
+    }
+
+    const key = this.createApiTargetKey(options.apiTarget)
+
+    const ctx: RateLimitRetryCtx = {
+      key,
+      error: options.error,
+      signal: options.item.signal,
+      attempt: options.item.attempt,
+      apiTarget: options.apiTarget
+    }
+
+    const decision = await this.options.retryStrategy(ctx)
+
+    switch (decision.type) {
+      case 'retry_same':
+        this.releaseTask({ isToScheduleTick: false })
+
+        options.item.attempt++
+        options.item.started = false
+        options.item.pinnedApiTargetId = options.apiTarget.id
+
+        if (options.item.signal?.aborted) {
+          options.item.reject(new DOMException('Aborted', 'AbortError'))
+
+          break
+        }
+
+        this.queue.unshift(options.item)
+
+        const delay = Math.max(0, decision.delayMs ?? 0)
+
+        if (delay > 0) {
+          this.nextWakeUpAt = Date.now() + delay
+          this.scheduleQueueItemRun({ delay })
+        } else {
+          this.scheduleQueueItemRun()
+        }
+
+        return
+
+      case 'retry_other': {
+        const cooldown = Math.max(0, decision.cooldownMs || 0)
+
+        this.releaseTask({ isToScheduleTick: false })
+
+        if (cooldown > 0) {
+          await this.options.store!.setCooldown(key, cooldown)
+        }
+
+        options.item.attempt++
+        options.item.started = false
+        options.item.pinnedApiTargetId = undefined
+
+        if (options.item.signal?.aborted) {
+          options.item.reject(new DOMException('Aborted', 'AbortError'))
+
+          break
+        }
+
+        this.queue.unshift(options.item)
+
+        const delay = Math.max(0, decision.delayMs ?? 0)
+
+        if (delay > 0) {
+          this.nextWakeUpAt = Date.now() + delay
+          this.scheduleQueueItemRun({ delay })
+        } else {
+          this.scheduleQueueItemRun()
+        }
+
+        return
+      }
+
+      case 'cooldown':
+        const ms = Math.max(0, decision.cooldownMs || 0)
+
+        this.releaseTask({ isToScheduleTick: false })
+
+        await this.options.store!.setCooldown(key, ms)
+
+        const then = decision.then
+
+        if (then === 'retry_same' || then === 'retry_other') {
+          options.item.attempt++
+          options.item.started = false
+          options.item.pinnedApiTargetId =
+            decision.then === 'retry_same' ? options.apiTarget.id : undefined
+
+          if (options.item.signal?.aborted) {
+            options.item.reject(new DOMException('Aborted', 'AbortError'))
+
+            break
+          }
+
+          this.queue.unshift(options.item)
+
+          const delay = decision.cooldownMs
+
+          this.nextWakeUpAt = Date.now() + delay
+          this.scheduleQueueItemRun({ delay })
+
+          return
+        }
+
+        this.releaseTask({ isToScheduleTick: true })
+
+        options.item.reject(options.error)
+
+        break
+      default:
+        this.releaseTask({ isToScheduleTick: true })
+
+        options.item.reject(options.error)
     }
   }
 }

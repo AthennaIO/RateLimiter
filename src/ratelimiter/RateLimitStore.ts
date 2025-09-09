@@ -28,6 +28,10 @@ export class RateLimitStore extends Macroable {
     this.options = options
   }
 
+  public async truncate() {
+    await Cache.store(this.options.store).truncate()
+  }
+
   public async getOrInit(key: string, rules: RateLimitRule[]) {
     const cache = Cache.store(this.options.store)
 
