@@ -8,6 +8,5 @@
  */
 
 export type ScheduleOptions = {
-  id?: string
   signal?: AbortSignal
 }
