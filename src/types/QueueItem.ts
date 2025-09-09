@@ -17,5 +17,6 @@ export type QueueItem<T> = {
   started: boolean
   signal?: AbortSignal
   attempt?: number
+  avoidApiTargetId?: string
   pinnedApiTargetId?: string
 }

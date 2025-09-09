@@ -19,6 +19,7 @@ import type {
   RateLimitRetryDecision
 } from '#src/types'
 
+import { debug } from '#src/debug'
 import { Config } from '@athenna/config'
 import { RateLimitStore } from '#src/ratelimiter/RateLimitStore'
 import { Json, String, Macroable, Options } from '@athenna/common'
@@ -510,10 +511,10 @@ export class RateLimiterBuilder extends Macroable {
    * Read the API Target selection strategy and defines which is
    * going to be used.
    */
-  private createIdxBySelectionStrategy(pinnedApiTargetId?: string) {
-    if (pinnedApiTargetId) {
+  private createIdxBySelectionStrategy(item: QueueItem<any>) {
+    if (item.pinnedApiTargetId) {
       const i = this.options.apiTargets.findIndex(
-        a => a.id === pinnedApiTargetId
+        a => a.id === item.pinnedApiTargetId
       )
 
       if (i >= 0) {
@@ -530,6 +531,14 @@ export class RateLimiterBuilder extends Macroable {
       case 'first_available':
       default:
         indexes = this.createFirstAvailableIdx()
+    }
+
+    if (item.avoidApiTargetId) {
+      const i = this.options.apiTargets.findIndex(
+        a => a.id === item.avoidApiTargetId
+      )
+
+      return indexes.filter(idx => idx !== i)
     }
 
     return indexes
@@ -590,9 +599,8 @@ export class RateLimiterBuilder extends Macroable {
       let apiTarget: RateLimitApiTarget = null
 
       const nextItem = this.queue[0]
-      const pinnedApiTargetId = nextItem?.pinnedApiTargetId
 
-      for (const i of this.createIdxBySelectionStrategy(pinnedApiTargetId)) {
+      for (const i of this.createIdxBySelectionStrategy(nextItem)) {
         const key = this.createApiTargetKey(this.options.apiTargets[i])
 
         const rules = this.options.apiTargets[i].rules?.length
@@ -793,16 +801,25 @@ export class RateLimiterBuilder extends Macroable {
     }
 
     const decision = await this.options.retryStrategy(ctx)
+    const cooldown = Math.max(0, decision.cooldownMs ?? 0)
+
+    if (cooldown > 0) {
+      await this.options
+        .store!.setCooldown(this.options.key, cooldown)
+        .catch(() => {
+          debug('failed to set cooldown in cache for key %s', this.options.key)
+        })
+    }
 
     switch (decision.type) {
-      case 'retry_same':
       case 'retry_other':
-        const delay = Math.max(0, decision.delayMs ?? 0)
-
+      case 'retry_same':
         this.releaseTask({ isToScheduleTick: false })
 
         options.item.attempt++
         options.item.started = false
+        options.item.avoidApiTargetId = undefined
+        options.item.pinnedApiTargetId = undefined
 
         if (options.item.signal?.aborted) {
           options.item.reject(new DOMException('Aborted', 'AbortError'))
@@ -812,48 +829,12 @@ export class RateLimiterBuilder extends Macroable {
 
         this.queue.unshift(options.item)
 
-        if (delay > 0) {
-          this.nextWakeUpAt = Date.now() + delay
-          this.scheduleQueueItemRun({ delay })
-        } else {
-          this.scheduleQueueItemRun()
-        }
+        const delay = cooldown
+
+        this.nextWakeUpAt = Date.now() + cooldown
+        this.scheduleQueueItemRun({ delay })
 
         return
-
-      case 'cooldown': {
-        await this.options.store!.setCooldown(
-          this.options.key,
-          Math.max(0, decision.cooldownMs)
-        )
-
-        if (decision.then === 'retry_same' || decision.then === 'retry_other') {
-          const delay = decision.cooldownMs
-
-          this.releaseTask({ isToScheduleTick: false })
-
-          options.item.attempt++
-          options.item.started = false
-
-          if (options.item.signal?.aborted) {
-            options.item.reject(new DOMException('Aborted', 'AbortError'))
-
-            break
-          }
-
-          this.queue.unshift(options.item)
-          this.nextWakeUpAt = Date.now() + delay
-          this.scheduleQueueItemRun({ delay })
-
-          return
-        }
-
-        this.releaseTask({ isToScheduleTick: true })
-
-        options.item.reject(options.error)
-
-        break
-      }
 
       default:
         this.releaseTask({ isToScheduleTick: true })
@@ -890,6 +871,13 @@ export class RateLimiterBuilder extends Macroable {
     }
 
     const decision = await this.options.retryStrategy(ctx)
+    const cooldown = Math.max(0, decision.cooldownMs ?? 0)
+
+    if (cooldown > 0) {
+      await this.options.store!.setCooldown(key, cooldown).catch(() => {
+        debug('failed to set cooldown in cache for key %s', key)
+      })
+    }
 
     switch (decision.type) {
       case 'retry_same':
@@ -897,6 +885,7 @@ export class RateLimiterBuilder extends Macroable {
 
         options.item.attempt++
         options.item.started = false
+        options.item.avoidApiTargetId = undefined
         options.item.pinnedApiTargetId = options.apiTarget.id
 
         if (options.item.signal?.aborted) {
@@ -907,28 +896,19 @@ export class RateLimiterBuilder extends Macroable {
 
         this.queue.unshift(options.item)
 
-        const delay = Math.max(0, decision.delayMs ?? 0)
+        const delay = cooldown
 
-        if (delay > 0) {
-          this.nextWakeUpAt = Date.now() + delay
-          this.scheduleQueueItemRun({ delay })
-        } else {
-          this.scheduleQueueItemRun()
-        }
+        this.nextWakeUpAt = Date.now() + delay
+        this.scheduleQueueItemRun({ delay })
 
         return
 
-      case 'retry_other': {
-        const cooldown = Math.max(0, decision.cooldownMs || 0)
-
+      case 'retry_other':
         this.releaseTask({ isToScheduleTick: false })
-
-        if (cooldown > 0) {
-          await this.options.store!.setCooldown(key, cooldown)
-        }
 
         options.item.attempt++
         options.item.started = false
+        options.item.avoidApiTargetId = options.apiTarget.id
         options.item.pinnedApiTargetId = undefined
 
         if (options.item.signal?.aborted) {
@@ -939,54 +919,11 @@ export class RateLimiterBuilder extends Macroable {
 
         this.queue.unshift(options.item)
 
-        const delay = Math.max(0, decision.delayMs ?? 0)
-
-        if (delay > 0) {
-          this.nextWakeUpAt = Date.now() + delay
-          this.scheduleQueueItemRun({ delay })
-        } else {
-          this.scheduleQueueItemRun()
-        }
+        this.nextWakeUpAt = Date.now()
+        this.scheduleQueueItemRun()
 
         return
-      }
 
-      case 'cooldown':
-        const ms = Math.max(0, decision.cooldownMs || 0)
-
-        this.releaseTask({ isToScheduleTick: false })
-
-        await this.options.store!.setCooldown(key, ms)
-
-        const then = decision.then
-
-        if (then === 'retry_same' || then === 'retry_other') {
-          options.item.attempt++
-          options.item.started = false
-          options.item.pinnedApiTargetId =
-            decision.then === 'retry_same' ? options.apiTarget.id : undefined
-
-          if (options.item.signal?.aborted) {
-            options.item.reject(new DOMException('Aborted', 'AbortError'))
-
-            break
-          }
-
-          this.queue.unshift(options.item)
-
-          const delay = decision.cooldownMs
-
-          this.nextWakeUpAt = Date.now() + delay
-          this.scheduleQueueItemRun({ delay })
-
-          return
-        }
-
-        this.releaseTask({ isToScheduleTick: true })
-
-        options.item.reject(options.error)
-
-        break
       default:
         this.releaseTask({ isToScheduleTick: true })
 

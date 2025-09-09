@@ -32,6 +32,9 @@ export class RateLimitStore extends Macroable {
     await Cache.store(this.options.store).truncate()
   }
 
+  /**
+   * Get the rate limit buckets from the cache or initialize them.
+   */
   public async getOrInit(key: string, rules: RateLimitRule[]) {
     const cache = Cache.store(this.options.store)
 
