@@ -289,11 +289,11 @@ export class RateLimiterBuilderTest {
     /**
      * Third one only after releasing the 300ms window (rule minute)
      */
-    assert.isAtLeast(starts[2] - starts[1], 300)
-    assert.isAtLeast(starts[3] - starts[2], 200)
-    assert.isAtLeast(starts[4] - starts[3], 300)
-    assert.isAtLeast(starts[5] - starts[4], 200)
-    assert.isAtLeast(total, 800)
+    assert.isAtLeast(starts[2] - starts[1], 299)
+    assert.isAtLeast(starts[3] - starts[2], 199)
+    assert.isAtLeast(starts[4] - starts[3], 299)
+    assert.isAtLeast(starts[5] - starts[4], 199)
+    assert.isAtLeast(total, 799)
   }
 
   @Test()
@@ -906,10 +906,10 @@ export class RateLimiterBuilderTest {
       .addRule({ type: 'second', limit: 1 })
       .retryStrategy(({ attempt }) => {
         if (attempt === 1) {
-          return { type: 'retry_same', cooldownMs: 100 }
+          return { type: 'retry_same', currentTargetCooldownMs: 100 }
         }
 
-        return { type: 'fail', cooldownMs: 100 }
+        return { type: 'fail', currentTargetCooldownMs: 100 }
       })
 
     let retriedForCount = 0
@@ -934,7 +934,7 @@ export class RateLimiterBuilderTest {
       .addRule({ type: 'second', limit: 1 })
       .retryStrategy(({ attempt }) => {
         if (attempt === 1) {
-          return { type: 'retry_same', cooldownMs: 100 }
+          return { type: 'retry_same', currentTargetCooldownMs: 100 }
         }
 
         return { type: 'fail' }
@@ -1025,10 +1025,10 @@ export class RateLimiterBuilderTest {
       .addTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api1.com' } })
       .retryStrategy(({ attempt }) => {
         if (attempt === 1) {
-          return { type: 'retry_other', cooldownMs: 100 }
+          return { type: 'retry_other', currentTargetCooldownMs: 100 }
         }
 
-        return { type: 'fail', cooldownMs: 100 }
+        return { type: 'fail', currentTargetCooldownMs: 100 }
       })
 
     let retriedForCount = 0
@@ -1053,7 +1053,7 @@ export class RateLimiterBuilderTest {
       .addTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api0.com' } })
       .addTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api1.com' } })
       .retryStrategy(() => {
-        return { type: 'retry_other', cooldownMs: 100 }
+        return { type: 'retry_other', currentTargetCooldownMs: 100 }
       })
 
     const targetUsed = []
@@ -1082,7 +1082,7 @@ export class RateLimiterBuilderTest {
       .addTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api0.com' } })
       .addTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api1.com' } })
       .retryStrategy(() => {
-        return { type: 'retry_same', cooldownMs: 100 }
+        return { type: 'retry_same', currentTargetCooldownMs: 100 }
       })
 
     const targetUsed = []

@@ -799,7 +799,7 @@ export class RateLimiterBuilder extends Macroable {
     }
 
     const decision = await this.options.retryStrategy(ctx)
-    const cooldown = Math.max(0, decision.cooldownMs ?? 0)
+    const cooldown = Math.max(0, decision.currentTargetCooldownMs ?? 0)
 
     if (cooldown > 0) {
       await this.options
@@ -869,7 +869,7 @@ export class RateLimiterBuilder extends Macroable {
     }
 
     const decision = await this.options.retryStrategy(ctx)
-    const cooldown = Math.max(0, decision.cooldownMs ?? 0)
+    const cooldown = Math.max(0, decision.currentTargetCooldownMs ?? 0)
 
     if (cooldown > 0) {
       await this.options.store!.setCooldown(key, cooldown).catch(() => {

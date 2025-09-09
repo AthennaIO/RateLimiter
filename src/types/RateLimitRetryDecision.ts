@@ -21,7 +21,7 @@ export type RateLimitRetryDecision =
        * This is a global state that will be respected by your store when
        * defining if it's allowed to run with that target or not.
        */
-      cooldownMs?: number
+      currentTargetCooldownMs?: number
     }
   | {
       /**
@@ -38,7 +38,7 @@ export type RateLimitRetryDecision =
        * This is a global state that will be respected by your store when
        * defining if it's allowed to run with that target or not.
        */
-      cooldownMs?: number
+      currentTargetCooldownMs?: number
     }
   | {
       /**
@@ -56,5 +56,5 @@ export type RateLimitRetryDecision =
        * This is a global state that will be respected by your store when
        * defining if it's allowed to run with that target or not.
        */
-      cooldownMs?: number
+      currentTargetCooldownMs?: number
     }
