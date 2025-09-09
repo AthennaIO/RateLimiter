@@ -7,7 +7,7 @@
  * file that was distributed with this source code.
  */
 
-import type { RateLimitApiTarget } from '#src/types'
+import type { RateLimitTarget } from '#src/types'
 
 export type RateLimitRetryCtx = {
   /**
@@ -31,7 +31,7 @@ export type RateLimitRetryCtx = {
   attempt: number
 
   /**
-   * The API Target that this retry is currently using.
+   * The target that this retry is currently using.
    */
-  apiTarget?: RateLimitApiTarget
+  target?: RateLimitTarget
 }

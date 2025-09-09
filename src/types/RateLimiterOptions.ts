@@ -9,7 +9,7 @@
 
 import type {
   RateLimitRule,
-  RateLimitApiTarget,
+  RateLimitTarget,
   RateLimitRetryClosure
 } from '#src/types'
 import type { RateLimitStore } from '#src/ratelimiter/RateLimitStore'
@@ -23,7 +23,7 @@ export type RateLimiterOptions = {
   /**
    * The logical key that will be used by store to save buckets.
    * If API Targers are defined, it will be used as a prefix from
-   * a hash created from API Targets metadata object: `${key}:${hash}`.
+   * a hash created from targets metadata object: `${key}:${hash}`.
    */
   key?: string
 
@@ -31,7 +31,7 @@ export type RateLimiterOptions = {
    * The api targets that will be used to create API rotations when
    * some of them fails.
    */
-  apiTargets?: RateLimitApiTarget[]
+  targets?: RateLimitTarget[]
 
   /**
    * The retry strategy for this rate limiter. This is useful to
@@ -60,10 +60,10 @@ export type RateLimiterOptions = {
   jitterMs?: number
 
   /**
-   * Define the selection strategy that will be used to select which API target
+   * Define the selection strategy that will be used to select which target
    * will be used next when some of them fails.
    *
    * @default 'first_available'
    */
-  apiTargetSelectionStrategy: 'first_available' | 'round_robin'
+  targetSelectionStrategy: 'first_available' | 'round_robin'
 }

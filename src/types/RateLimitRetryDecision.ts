@@ -17,44 +17,44 @@ export type RateLimitRetryDecision =
       type: 'fail'
 
       /**
-       * Define for how long time your API Target will be blocked from usage.
+       * Define for how long time your target will be blocked from usage.
        * This is a global state that will be respected by your store when
-       * defining if it's allowed to run with that API Target or not.
+       * defining if it's allowed to run with that target or not.
        */
       cooldownMs?: number
     }
   | {
       /**
-       * Decide that your next try should be with the same API Target.
+       * Decide that your next try should be with the same target.
        * Returning `retry_same` will basically avoid your RateLimiter
-       * from using any other API Target until you decide something else.
+       * from using any other target until you decide something else.
        *
-       * This decision works when using single API Targets or multiple.
+       * This decision works when using single targets or multiple.
        */
       type: 'retry_same'
 
       /**
-       * Define for how long time your API Target will be blocked from usage.
+       * Define for how long time your target will be blocked from usage.
        * This is a global state that will be respected by your store when
-       * defining if it's allowed to run with that API Target or not.
+       * defining if it's allowed to run with that target or not.
        */
       cooldownMs?: number
     }
   | {
       /**
-       * Decide that your next try should be with another API Target.
+       * Decide that your next try should be with another target.
        * Returning `retry_other` will basically avoid your RateLimiter
-       * from using the last API Target until you decide something else.
+       * from using the last target until you decide something else.
        *
-       * This decision only takes effect when using multiple API Targets,
+       * This decision only takes effect when using multiple targets,
        * If using none or only one, it will use `retry_same` by default.
        */
       type: 'retry_other'
 
       /**
-       * Define for how long time your API Target will be blocked from usage.
+       * Define for how long time your target will be blocked from usage.
        * This is a global state that will be respected by your store when
-       * defining if it's allowed to run with that API Target or not.
+       * defining if it's allowed to run with that target or not.
        */
       cooldownMs?: number
     }

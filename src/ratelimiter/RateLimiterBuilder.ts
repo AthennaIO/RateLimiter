@@ -11,9 +11,9 @@ import type {
   QueueItem,
   RateLimitRule,
   ScheduleOptions,
+  RateLimitTarget,
   RateLimitRetryCtx,
   RateLimiterOptions,
-  RateLimitApiTarget,
   RateLimitScheduleCtx,
   RateLimitStoreOptions,
   RateLimitRetryDecision
@@ -34,7 +34,7 @@ export class RateLimiterBuilder extends Macroable {
   private options: RateLimiterOptions = {
     jitterMs: 0,
     maxConcurrent: 1,
-    apiTargetSelectionStrategy: 'first_available'
+    targetSelectionStrategy: 'first_available'
   }
 
   /**
@@ -182,7 +182,7 @@ export class RateLimiterBuilder extends Macroable {
   }
 
   /**
-   * Add a new rate limit API target.
+   * Add a new rate limit target.
    *
    * @example
    * ```ts
@@ -190,21 +190,21 @@ export class RateLimiterBuilder extends Macroable {
    *   .store('memory')
    *   .key('request:/profile')
    *   .addRule({ type: 'second', limit: 1 })
-   *   .addApiTarget({ metadata: { baseUrl: 'http://example.com' } })
+   *   .addTarget({ metadata: { baseUrl: 'http://example.com' } })
    *
    * await limiter.schedule(() => {...})
    * ```
    */
-  public addApiTarget(apiTarget: RateLimitApiTarget) {
-    if (!this.options.apiTargets) {
-      this.options.apiTargets = []
+  public addTarget(target: RateLimitTarget) {
+    if (!this.options.targets) {
+      this.options.targets = []
     }
 
-    if (!apiTarget.id) {
-      apiTarget.id = this.getApiTargetId(apiTarget)
+    if (!target.id) {
+      target.id = this.getTargetId(target)
     }
 
-    this.options.apiTargets.push(apiTarget)
+    this.options.targets.push(target)
 
     return this
   }
@@ -229,7 +229,7 @@ export class RateLimiterBuilder extends Macroable {
   }
 
   /**
-   * Set multiple rate limit API targets with one method call.
+   * Set multiple rate limit targets with one method call.
    *
    * @example
    * ```ts
@@ -237,20 +237,20 @@ export class RateLimiterBuilder extends Macroable {
    *   .store('memory')
    *   .key('request:/profile')
    *   .addRule({ type: 'second', limit: 1 })
-   *   .setApiTargets([{ metadata: { baseUrl: 'http://example.com' } }])
+   *   .setTargets([{ metadata: { baseUrl: 'http://example.com' } }])
    *
    * await limiter.schedule(() => {...})
    * ```
    */
-  public setApiTargets(apiTargets: RateLimitApiTarget[]) {
-    apiTargets.forEach(apiTarget => this.addApiTarget(apiTarget))
+  public setTargets(targets: RateLimitTarget[]) {
+    targets.forEach(target => this.addTarget(target))
 
     return this
   }
 
   /**
-   * Define the API target selection strategy that will be used
-   * to select the next one when an API Target fails.
+   * Define the target selection strategy that will be used
+   * to select the next one when an target fails.
    *
    * @example
    * ```ts
@@ -258,20 +258,20 @@ export class RateLimiterBuilder extends Macroable {
    *   .store('memory')
    *   .key('request:/profile')
    *   .addRule({ type: 'second', limit: 1 })
-   *   .addApiTarget({ metadata: { baseUrl: 'http://example.com' } })
-   *   .apiTargetSelectionStrategy('round_robin')
+   *   .addTarget({ metadata: { baseUrl: 'http://example.com' } })
+   *   .targetSelectionStrategy('round_robin')
    *
    * await limiter.schedule(() => {...})
    * ```
    */
-  public apiTargetSelectionStrategy(value: 'first_available' | 'round_robin') {
-    this.options.apiTargetSelectionStrategy = value
+  public targetSelectionStrategy(value: 'first_available' | 'round_robin') {
+    this.options.targetSelectionStrategy = value
 
     return this
   }
 
   /**
-   * Define the RateLmiter retry strategy. This is useful to control
+   * Define the RateLimiter retry strategy. This is useful to control
    * when and how we should proceed with the retry of tasks that failed
    * to execute.
    *
@@ -393,7 +393,7 @@ export class RateLimiterBuilder extends Macroable {
 
   /**
    * Schedule the execution of an async function respecting
-   * the rate limit rules and the API Targets.
+   * the rate limit rules and the targets.
    *
    * @example
    * ```ts
@@ -420,15 +420,15 @@ export class RateLimiterBuilder extends Macroable {
     }
 
     if (!this.options.rules?.length) {
-      if (!this.options.apiTargets?.length) {
+      if (!this.options.targets?.length) {
         throw new MissingRuleException()
       }
 
-      const missingRuleApiTargets = this.options.apiTargets.filter(
-        apiTarget => !apiTarget.rules
+      const missingRuleTargets = this.options.targets.filter(
+        target => !target.rules
       )
 
-      if (missingRuleApiTargets.length) {
+      if (missingRuleTargets.length) {
         throw new MissingRuleException()
       }
     }
@@ -478,21 +478,21 @@ export class RateLimiterBuilder extends Macroable {
   }
 
   /**
-   * Create a custom id for an API Target by reading the metadata object.
+   * Create a custom id for an target by reading the metadata object.
    * The object will always be sorted by keys.
    */
-  private getApiTargetId(apiTarget: RateLimitApiTarget) {
-    return String.hash(JSON.stringify(Json.sort(apiTarget.metadata)), {
+  public getTargetId(target: RateLimitTarget) {
+    return String.hash(JSON.stringify(Json.sort(target.metadata)), {
       key: Config.get('app.key', 'ratelimiter')
     })
   }
 
   /**
-   * Create a custom key for an API Target to be used to map the
-   * API Target rules into the cache.
+   * Create a custom key for an target to be used to map the
+   * target rules into the cache.
    */
-  private createApiTargetKey(apiTarget: RateLimitApiTarget) {
-    return `${this.options.key}:${this.getApiTargetId(apiTarget)}`
+  public createTargetKey(target: RateLimitTarget) {
+    return `${this.options.key}:${this.getTargetId(target)}`
   }
 
   /**
@@ -508,13 +508,13 @@ export class RateLimiterBuilder extends Macroable {
   }
 
   /**
-   * Read the API Target selection strategy and defines which is
+   * Read the target selection strategy and defines which is
    * going to be used.
    */
   private createIdxBySelectionStrategy(item: QueueItem<any>) {
-    if (item.pinnedApiTargetId) {
-      const i = this.options.apiTargets.findIndex(
-        a => a.id === item.pinnedApiTargetId
+    if (item.pinnedTargetId) {
+      const i = this.options.targets.findIndex(
+        a => a.id === item.pinnedTargetId
       )
 
       if (i >= 0) {
@@ -524,7 +524,7 @@ export class RateLimiterBuilder extends Macroable {
 
     let indexes = []
 
-    switch (this.options.apiTargetSelectionStrategy) {
+    switch (this.options.targetSelectionStrategy) {
       case 'round_robin':
         indexes = this.createRoundRobinIdx()
         break
@@ -533,10 +533,8 @@ export class RateLimiterBuilder extends Macroable {
         indexes = this.createFirstAvailableIdx()
     }
 
-    if (item.avoidApiTargetId) {
-      const i = this.options.apiTargets.findIndex(
-        a => a.id === item.avoidApiTargetId
-      )
+    if (item.avoidTargetId) {
+      const i = this.options.targets.findIndex(a => a.id === item.avoidTargetId)
 
       return indexes.filter(idx => idx !== i)
     }
@@ -549,8 +547,8 @@ export class RateLimiterBuilder extends Macroable {
    */
   private createRoundRobinIdx() {
     return Array.from(
-      { length: this.options.apiTargets.length },
-      (_, k) => (this.rrIndex + k) % this.options.apiTargets.length
+      { length: this.options.targets.length },
+      (_, k) => (this.rrIndex + k) % this.options.targets.length
     )
   }
 
@@ -558,7 +556,7 @@ export class RateLimiterBuilder extends Macroable {
    * Create the indexes for when using first_available selection strategy.
    */
   private createFirstAvailableIdx() {
-    return Array.from({ length: this.options.apiTargets.length }, (_, k) => k)
+    return Array.from({ length: this.options.targets.length }, (_, k) => k)
   }
 
   /**
@@ -594,17 +592,17 @@ export class RateLimiterBuilder extends Macroable {
 
     const now = Date.now()
 
-    if (this.options.apiTargets?.length) {
+    if (this.options.targets?.length) {
       let minWait = Number.POSITIVE_INFINITY
-      let apiTarget: RateLimitApiTarget = null
+      let target: RateLimitTarget = null
 
       const nextItem = this.queue[0]
 
       for (const i of this.createIdxBySelectionStrategy(nextItem)) {
-        const key = this.createApiTargetKey(this.options.apiTargets[i])
+        const key = this.createTargetKey(this.options.targets[i])
 
-        const rules = this.options.apiTargets[i].rules?.length
-          ? this.options.apiTargets[i].rules
+        const rules = this.options.targets[i].rules?.length
+          ? this.options.targets[i].rules
           : this.options.rules
 
         try {
@@ -613,10 +611,10 @@ export class RateLimiterBuilder extends Macroable {
           this.storeErrorCount = 0
 
           if (res.allowed) {
-            apiTarget = this.options.apiTargets[i]
+            target = this.options.targets[i]
 
-            if (this.options.apiTargetSelectionStrategy === 'round_robin') {
-              this.rrIndex = (i + 1) % this.options.apiTargets.length
+            if (this.options.targetSelectionStrategy === 'round_robin') {
+              this.rrIndex = (i + 1) % this.options.targets.length
             }
 
             break
@@ -638,7 +636,7 @@ export class RateLimiterBuilder extends Macroable {
         }
       }
 
-      if (!apiTarget) {
+      if (!target) {
         const delay = (isFinite(minWait) ? minWait : 100) + this.randomJitter()
 
         this.nextWakeUpAt = now + delay
@@ -667,13 +665,13 @@ export class RateLimiterBuilder extends Macroable {
       this.active++
 
       Promise.resolve()
-        .then(() => item.run({ signal: item.signal, apiTarget }))
+        .then(() => item.run({ signal: item.signal, target }))
         .then(result => {
           this.releaseTask({ isToScheduleTick: true })
 
           item.resolve(result)
         })
-        .catch(error => this.onFailInMultiMode({ error, item, apiTarget }))
+        .catch(error => this.onFailInMultiMode({ error, item, target }))
 
       if (this.active < this.options.maxConcurrent) {
         this.scheduleQueueItemRun()
@@ -818,8 +816,8 @@ export class RateLimiterBuilder extends Macroable {
 
         options.item.attempt++
         options.item.started = false
-        options.item.avoidApiTargetId = undefined
-        options.item.pinnedApiTargetId = undefined
+        options.item.avoidTargetId = undefined
+        options.item.pinnedTargetId = undefined
 
         if (options.item.signal?.aborted) {
           options.item.reject(new DOMException('Aborted', 'AbortError'))
@@ -850,7 +848,7 @@ export class RateLimiterBuilder extends Macroable {
   private onFailInMultiMode = async (options: {
     error: Error
     item: QueueItem<any>
-    apiTarget: RateLimitApiTarget
+    target: RateLimitTarget
   }) => {
     if (!this.options.retryStrategy) {
       this.releaseTask({ isToScheduleTick: true })
@@ -860,14 +858,14 @@ export class RateLimiterBuilder extends Macroable {
       return
     }
 
-    const key = this.createApiTargetKey(options.apiTarget)
+    const key = this.createTargetKey(options.target)
 
     const ctx: RateLimitRetryCtx = {
       key,
       error: options.error,
       signal: options.item.signal,
       attempt: options.item.attempt,
-      apiTarget: options.apiTarget
+      target: options.target
     }
 
     const decision = await this.options.retryStrategy(ctx)
@@ -885,8 +883,8 @@ export class RateLimiterBuilder extends Macroable {
 
         options.item.attempt++
         options.item.started = false
-        options.item.avoidApiTargetId = undefined
-        options.item.pinnedApiTargetId = options.apiTarget.id
+        options.item.avoidTargetId = undefined
+        options.item.pinnedTargetId = options.target.id
 
         if (options.item.signal?.aborted) {
           options.item.reject(new DOMException('Aborted', 'AbortError'))
@@ -908,8 +906,8 @@ export class RateLimiterBuilder extends Macroable {
 
         options.item.attempt++
         options.item.started = false
-        options.item.avoidApiTargetId = options.apiTarget.id
-        options.item.pinnedApiTargetId = undefined
+        options.item.avoidTargetId = options.target.id
+        options.item.pinnedTargetId = undefined
 
         if (options.item.signal?.aborted) {
           options.item.reject(new DOMException('Aborted', 'AbortError'))
