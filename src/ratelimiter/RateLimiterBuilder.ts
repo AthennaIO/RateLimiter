@@ -16,7 +16,8 @@ import type {
   RateLimiterOptions,
   RateLimitScheduleCtx,
   RateLimitStoreOptions,
-  RateLimitRetryDecision
+  RateLimitRetryDecision,
+  RateLimitPendingCtx
 } from '#src/types'
 
 import { debug } from '#src/debug'
@@ -36,6 +37,12 @@ export class RateLimiterBuilder extends Macroable {
     maxConcurrent: 1,
     targetSelectionStrategy: 'first_available'
   }
+
+  /**
+   * Holds the pending closure that will run when schedule is pending
+   * for some reason.
+   */
+  private onPendingClosure: (ctx: RateLimitPendingCtx) => void = null
 
   /**
    * Holds the number of times the store has failed. Important
@@ -154,6 +161,30 @@ export class RateLimiterBuilder extends Macroable {
    */
   public jitterMs(value: number) {
     this.options.jitterMs = Math.max(0, value ?? 0)
+
+    return this
+  }
+
+  /**
+   * Define a closure that will run everytime rate limiter
+   * keep on pending state because it is respecting the rate
+   * limit rules defined.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *   .onPending(() => {
+   *     console.log('request to /profile pending')
+   *   })
+   *   .addRule({ type: 'second', limit: 1 })
+   *
+   * await limiter.schedule(() => {...})
+   * ```
+   */
+  public onPending(closure: (ctx: RateLimitPendingCtx) => void) {
+    this.onPendingClosure = closure
 
     return this
   }
@@ -583,6 +614,8 @@ export class RateLimiterBuilder extends Macroable {
     this.timer = null
 
     if (this.active >= this.options.maxConcurrent) {
+      this.emitPending({ reason: 'concurrency', delay: 0 })
+
       return
     }
 
@@ -640,6 +673,7 @@ export class RateLimiterBuilder extends Macroable {
         const delay = (isFinite(minWait) ? minWait : 100) + this.randomJitter()
 
         this.nextWakeUpAt = now + delay
+        this.emitPending({ reason: 'rate_limit', delay })
         this.scheduleQueueItemRun({ delay })
 
         return
@@ -717,6 +751,7 @@ export class RateLimiterBuilder extends Macroable {
       const delay = waitMs + this.randomJitter()
 
       this.nextWakeUpAt = now + delay
+      this.emitPending({ reason: 'rate_limit', delay })
       this.scheduleQueueItemRun({ delay })
 
       return
@@ -807,6 +842,13 @@ export class RateLimiterBuilder extends Macroable {
         .catch(() => {
           debug('failed to set cooldown in cache for key %s', this.options.key)
         })
+
+      this.emitPending({
+        reason: 'cooldown',
+        delay: cooldown,
+        attempt: options.item.attempt,
+        nextWakeUpAt: Date.now() + cooldown
+      })
     }
 
     switch (decision.type) {
@@ -875,6 +917,15 @@ export class RateLimiterBuilder extends Macroable {
       await this.options.store!.setCooldown(key, cooldown).catch(() => {
         debug('failed to set cooldown in cache for key %s', key)
       })
+
+      this.emitPending({
+        reason: 'cooldown',
+        key,
+        delay: cooldown,
+        targetId: options.target.id,
+        attempt: options.item.attempt,
+        nextWakeUpAt: Date.now() + cooldown
+      })
     }
 
     switch (decision.type) {
@@ -927,5 +978,30 @@ export class RateLimiterBuilder extends Macroable {
 
         options.item.reject(options.error)
     }
+  }
+
+  /**
+   * Run the pending closure defined by user.
+   */
+  private emitPending(input: Partial<RateLimitPendingCtx>) {
+    if (!this.onPendingClosure) {
+      return
+    }
+
+    const delay = Math.max(0, input.delay || 0)
+    const nextWakeUpAt = this.nextWakeUpAt ?? Date.now() + delay
+
+    const ctx: RateLimitPendingCtx = {
+      reason: input.reason,
+      delay,
+      key: this.options.key,
+      targetId: input.targetId,
+      attempt: input.attempt,
+      queued: this.queue.length,
+      active: this.active,
+      nextWakeUpAt
+    }
+
+    Promise.resolve().then(() => this.onPendingClosure(ctx))
   }
 }
