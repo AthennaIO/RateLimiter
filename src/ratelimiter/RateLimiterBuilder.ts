@@ -907,7 +907,8 @@ export class RateLimiterBuilder extends Macroable {
       error: options.error,
       signal: options.item.signal,
       attempt: options.item.attempt,
-      target: options.target
+      target: options.target,
+      targets: this.options.targets
     }
 
     const decision = await this.options.retryStrategy(ctx)

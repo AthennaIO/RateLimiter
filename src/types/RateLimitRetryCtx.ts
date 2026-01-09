@@ -34,4 +34,9 @@ export type RateLimitRetryCtx = {
    * The target that this retry is currently using.
    */
   target?: RateLimitTarget
+
+  /**
+   * All the targets that are available to use for this retry.
+   */
+  targets?: RateLimitTarget[]
 }
