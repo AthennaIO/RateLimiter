@@ -7,7 +7,7 @@
  * file that was distributed with this source code.
  */
 
-import type { RateLimitTarget } from '#src/types'
+import type { RateLimitTarget } from '#src/ratelimiter/RateLimitTarget'
 
 export type RateLimitRetryCtx = {
   /**
