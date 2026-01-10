@@ -9,10 +9,11 @@
 
 import type {
   RateLimitRule,
-  RateLimitTarget,
   RateLimitRetryClosure
 } from '#src/types'
+
 import type { RateLimitStore } from '#src/ratelimiter/RateLimitStore'
+import type { RateLimitTarget } from '#src/ratelimiter/RateLimitTarget'
 
 export type RateLimiterOptions = {
   /**
