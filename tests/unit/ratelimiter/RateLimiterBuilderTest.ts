@@ -655,7 +655,7 @@ export class RateLimiterBuilderTest {
 
     const store = new RateLimitStore({ store: 'memory', windowMs: { second: 100 } })
 
-    await store.setCooldown(limiter.createTargetKey(api1), 1000)
+    await store.setCooldown(limiter.createTargetKey(api1), 5000)
 
     const result = await limiter.schedule(({ target }) => {
       return target.metadata.baseUrl
@@ -681,7 +681,7 @@ export class RateLimiterBuilderTest {
 
     const store = new RateLimitStore({ store: 'memory', windowMs: { second: 100 } })
 
-    await store.setCooldown(limiter.createTargetKey(api1), 1000)
+    await store.setCooldown(limiter.createTargetKey(api1), 5000)
 
     const used: string[] = []
     const barrier = this.createBarrier()
@@ -729,7 +729,7 @@ export class RateLimiterBuilderTest {
 
     const store = new RateLimitStore({ store: 'memory', windowMs: { second: 100 } })
 
-    await store.setCooldown(limiter.createTargetKey(api1), 1000)
+    await store.setCooldown(limiter.createTargetKey(api1), 5000)
 
     const result = await limiter.schedule(({ target }) => {
       return target.metadata.baseUrl
@@ -756,7 +756,7 @@ export class RateLimiterBuilderTest {
 
     const store = new RateLimitStore({ store: 'memory', windowMs: { second: 100 } })
 
-    await store.setCooldown(limiter.createTargetKey(api1), 1000)
+    await store.setCooldown(limiter.createTargetKey(api1), 5000)
 
     const used: string[] = []
     const barrier = this.createBarrier()
