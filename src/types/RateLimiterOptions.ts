@@ -7,10 +7,7 @@
  * file that was distributed with this source code.
  */
 
-import type {
-  RateLimitRule,
-  RateLimitRetryClosure
-} from '#src/types'
+import type { RateLimitRule, RateLimitRetryClosure } from '#src/types'
 
 import type { RateLimitStore } from '#src/ratelimiter/RateLimitStore'
 import type { RateLimitTarget } from '#src/ratelimiter/RateLimitTarget'

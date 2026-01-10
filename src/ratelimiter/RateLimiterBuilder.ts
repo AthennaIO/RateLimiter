@@ -21,7 +21,7 @@ import type {
 } from '#src/types'
 
 import { debug } from '#src/debug'
-import { Macroable, Options } from '@athenna/common'
+import { Macroable, Options, Parser } from '@athenna/common'
 import { RateLimitStore } from '#src/ratelimiter/RateLimitStore'
 import { RateLimitTarget } from '#src/ratelimiter/RateLimitTarget'
 import { MissingKeyException } from '#src/exceptions/MissingKeyException'
@@ -806,7 +806,7 @@ export class RateLimiterBuilder extends Macroable {
       await this.tryToRunQueueItem()
     }
 
-    this.timer = setTimeout(fire, options.delay)
+    this.timer = setTimeout(fire, this.getDelay(options.delay))
   }
 
   /**
@@ -977,6 +977,17 @@ export class RateLimiterBuilder extends Macroable {
 
         options.item.reject(options.error)
     }
+  }
+
+  /**
+   * Locks the delay to 1 day to avoid big set timeout instances.
+   */
+  private getDelay(delay: number) {
+    if (delay > Parser.timeToMs('1d')) {
+      return Parser.timeToMs('1d')
+    }
+
+    return delay
   }
 
   /**
