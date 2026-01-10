@@ -683,7 +683,7 @@ export class RateLimiterBuilderTest {
     const store = new RateLimitStore({ store: 'memory', windowMs: { second: 100 } })
 
     await store.setCooldown(limiter.createTargetKey(api1), 5000)
-    await Sleep.for(10).milliseconds().wait()
+    await Sleep.for(50).milliseconds().wait()
 
     const used: string[] = []
     const barrier = this.createBarrier()
@@ -699,7 +699,7 @@ export class RateLimiterBuilderTest {
     const p1 = limiter.schedule(run)
     const p2 = limiter.schedule(run)
 
-    await Sleep.for(105).milliseconds().wait()
+    await this.waitUntil(() => used.length === 2, 10, 1000)
 
     used.sort()
 
@@ -760,7 +760,7 @@ export class RateLimiterBuilderTest {
     const store = new RateLimitStore({ store: 'memory', windowMs: { second: 100 } })
 
     await store.setCooldown(limiter.createTargetKey(api1), 5000)
-    await Sleep.for(10).milliseconds().wait()
+    await Sleep.for(50).milliseconds().wait()
 
     const used: string[] = []
     const barrier = this.createBarrier()
@@ -776,7 +776,7 @@ export class RateLimiterBuilderTest {
     const p1 = limiter.schedule(run)
     const p2 = limiter.schedule(run)
 
-    await Sleep.for(105).milliseconds().wait()
+    await this.waitUntil(() => used.length === 2, 10, 1000)
 
     used.sort()
 
