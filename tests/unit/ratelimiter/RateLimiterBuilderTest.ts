@@ -655,7 +655,8 @@ export class RateLimiterBuilderTest {
 
     const store = new RateLimitStore({ store: 'memory', windowMs: { second: 100 } })
 
-    await store.setCooldown(limiter.createTargetKey(api1), 1000)
+    await store.setCooldown(limiter.createTargetKey(api1), 5000)
+    await Sleep.for(10).milliseconds().wait()
 
     const result = await limiter.schedule(({ target }) => {
       return target.metadata.baseUrl
@@ -681,7 +682,8 @@ export class RateLimiterBuilderTest {
 
     const store = new RateLimitStore({ store: 'memory', windowMs: { second: 100 } })
 
-    await store.setCooldown(limiter.createTargetKey(api1), 1000)
+    await store.setCooldown(limiter.createTargetKey(api1), 5000)
+    await Sleep.for(50).milliseconds().wait()
 
     const used: string[] = []
     const barrier = this.createBarrier()
@@ -697,7 +699,7 @@ export class RateLimiterBuilderTest {
     const p1 = limiter.schedule(run)
     const p2 = limiter.schedule(run)
 
-    await Sleep.for(105).milliseconds().wait()
+    await this.waitUntil(() => used.length === 2, 10, 1000)
 
     used.sort()
 
@@ -729,7 +731,8 @@ export class RateLimiterBuilderTest {
 
     const store = new RateLimitStore({ store: 'memory', windowMs: { second: 100 } })
 
-    await store.setCooldown(limiter.createTargetKey(api1), 1000)
+    await store.setCooldown(limiter.createTargetKey(api1), 5000)
+    await Sleep.for(10).milliseconds().wait()
 
     const result = await limiter.schedule(({ target }) => {
       return target.metadata.baseUrl
@@ -756,7 +759,8 @@ export class RateLimiterBuilderTest {
 
     const store = new RateLimitStore({ store: 'memory', windowMs: { second: 100 } })
 
-    await store.setCooldown(limiter.createTargetKey(api1), 1000)
+    await store.setCooldown(limiter.createTargetKey(api1), 5000)
+    await Sleep.for(50).milliseconds().wait()
 
     const used: string[] = []
     const barrier = this.createBarrier()
@@ -772,7 +776,7 @@ export class RateLimiterBuilderTest {
     const p1 = limiter.schedule(run)
     const p2 = limiter.schedule(run)
 
-    await Sleep.for(105).milliseconds().wait()
+    await this.waitUntil(() => used.length === 2, 10, 1000)
 
     used.sort()
 
@@ -1099,5 +1103,353 @@ export class RateLimiterBuilderTest {
     })
 
     assert.deepEqual(targetUsed, ['http://api0.com', 'http://api0.com'])
+  }
+
+  @Test()
+  public async shouldBeAbleToUpdateRemainingCountFromScheduleClosureInSingleMode({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 1000 } })
+      .addRule({ type: 'second', limit: 10 })
+
+    let callCount = 0
+
+    await limiter.schedule(async ({ target }) => {
+      callCount++
+
+      await target.updateRemaining(2, 'second')
+
+      return 'ok'
+    })
+
+    const p1 = limiter.schedule(() => {
+      callCount++
+      return 'ok1'
+    })
+    const p2 = limiter.schedule(() => {
+      callCount++
+      return 'ok2'
+    })
+    const p3 = limiter.schedule(() => {
+      callCount++
+      return 'ok3'
+    })
+
+    await Promise.all([p1, p2, p3])
+
+    assert.equal(callCount, 4)
+  }
+
+  @Test()
+  public async shouldBeAbleToUpdateRemainingCountFromScheduleClosureWithTargets({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { minute: 1000 } })
+      .addTarget({ rules: [{ type: 'minute', limit: 10 }], metadata: { baseUrl: 'http://api0.com' } })
+
+    let callCount = 0
+
+    await limiter.schedule(async ({ target }) => {
+      callCount++
+      assert.equal(target.metadata.baseUrl, 'http://api0.com')
+
+      await target.updateRemaining(3, 'minute')
+
+      return 'ok'
+    })
+
+    const p1 = limiter.schedule(() => {
+      callCount++
+      return 'ok1'
+    })
+    const p2 = limiter.schedule(() => {
+      callCount++
+      return 'ok2'
+    })
+    const p3 = limiter.schedule(() => {
+      callCount++
+      return 'ok3'
+    })
+    const p4 = limiter.schedule(() => {
+      callCount++
+      return 'ok4'
+    })
+
+    await Promise.all([p1, p2, p3, p4])
+
+    assert.equal(callCount, 5)
+  }
+
+  @Test()
+  public async shouldUpdateRemainingCountAndAffectSubsequentRequests({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 200 } })
+      .addRule({ type: 'second', limit: 5 })
+
+    const startTime = Date.now()
+
+    await limiter.schedule(async ({ target }) => {
+      await target.updateRemaining(0, 'second')
+      return 'first'
+    })
+
+    await limiter.schedule(() => 'second')
+
+    const elapsed = Date.now() - startTime
+
+    assert.isAtLeast(elapsed, 150)
+  }
+
+  @Test()
+  public async shouldBeAbleToUpdateRemainingForDifferentRuleTypes({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 100, minute: 200 } })
+      .addRule({ type: 'second', limit: 5 })
+      .addRule({ type: 'minute', limit: 10 })
+
+    await limiter.schedule(async ({ target }) => {
+      await target.updateRemaining(2, 'second')
+      await target.updateRemaining(5, 'minute')
+
+      return 'ok'
+    })
+
+    const p1 = limiter.schedule(() => 'ok1')
+    const p2 = limiter.schedule(() => 'ok2')
+
+    const results = await Promise.all([p1, p2])
+
+    assert.deepEqual(results, ['ok1', 'ok2'])
+  }
+
+  @Test()
+  public async shouldTargetAlwaysBeAvailableInSingleMode({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 100 } })
+      .addRule({ type: 'second', limit: 1 })
+
+    await limiter.schedule(({ target }) => {
+      assert.isDefined(target)
+      assert.equal(target.id, '__implicit__')
+      assert.deepEqual(target.metadata, {})
+      assert.isFunction(target.updateRemaining)
+
+      return 'ok'
+    })
+  }
+
+  @Test()
+  public async shouldTargetAlwaysBeAvailableInMultiMode({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 100 } })
+      .addTarget({ rules: [{ type: 'second', limit: 1 }], metadata: { baseUrl: 'http://api0.com' } })
+
+    await limiter.schedule(({ target }) => {
+      assert.isDefined(target)
+      assert.isDefined(target.id)
+      assert.equal(target.metadata.baseUrl, 'http://api0.com')
+      assert.isFunction(target.updateRemaining)
+
+      return 'ok'
+    })
+  }
+
+  @Test()
+  public async shouldBeAbleToGetRemainingCountAfterRequests({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 100 } })
+      .addRule({ type: 'second', limit: 5 })
+
+    let remaining: number
+
+    await limiter.schedule(async ({ target }) => {
+      remaining = await target.getRemaining('second')
+
+      return 'ok'
+    })
+
+    assert.equal(remaining, 4)
+
+    await limiter.schedule(async ({ target }) => {
+      remaining = await target.getRemaining('second')
+
+      return 'ok'
+    })
+
+    assert.equal(remaining, 3)
+  }
+
+  @Test()
+  public async shouldBeAbleToGetResetAtTimestamp({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 100 } })
+      .addRule({ type: 'second', limit: 5 })
+
+    const startTime = Date.now()
+    let resetAt: number
+
+    await limiter.schedule(async ({ target }) => {
+      resetAt = await target.getResetAt('second')
+
+      return 'ok'
+    })
+
+    assert.isAtLeast(resetAt, startTime)
+    assert.isAtMost(resetAt, startTime + 150)
+  }
+
+  @Test()
+  public async shouldReturnCurrentTimeWhenBucketIsEmpty({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 100 } })
+      .addRule({ type: 'second', limit: 5 })
+
+    let resetAt: number
+    const now = Date.now()
+
+    await limiter.schedule(async ({ target }) => {
+      resetAt = await target.getResetAt('second')
+
+      return 'ok'
+    })
+
+    assert.isAtLeast(resetAt, now)
+  }
+
+  @Test()
+  public async shouldBeAbleToUpdateResetAtAndShiftTimestamps({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 500 } })
+      .addRule({ type: 'second', limit: 2 })
+
+    await limiter.schedule(async ({ target }) => {
+      await target.updateResetAt(1, 'second')
+
+      return 'ok'
+    })
+
+    const resetAt = await limiter.schedule(async ({ target }) => {
+      return target.getResetAt('second')
+    })
+
+    const expectedResetAt = Date.now() + 1000
+    assert.isAtLeast(resetAt, expectedResetAt - 100)
+    assert.isAtMost(resetAt, expectedResetAt + 100)
+  }
+
+  @Test()
+  public async shouldBeAbleToCompareAndConditionallyUpdateRemaining({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { minute: 1000 } })
+      .addRule({ type: 'minute', limit: 10 })
+
+    let updateCount = 0
+
+    await limiter.schedule(async ({ target }) => {
+      const internalRemaining = await target.getRemaining('minute')
+      const apiRemaining = 5
+
+      if (apiRemaining !== internalRemaining) {
+        await target.updateRemaining(apiRemaining, 'minute')
+
+        updateCount++
+      }
+
+      return 'ok'
+    })
+
+    assert.equal(updateCount, 1)
+
+    await limiter.schedule(async ({ target }) => {
+      const internalRemaining = await target.getRemaining('minute')
+      const apiRemaining = 5
+
+      if (apiRemaining !== internalRemaining) {
+        await target.updateRemaining(apiRemaining, 'minute')
+        updateCount++
+      }
+
+      return 'ok'
+    })
+
+    assert.equal(updateCount, 2)
+
+    const finalRemaining = await limiter.schedule(async ({ target }) => {
+      return target.getRemaining('minute')
+    })
+
+    assert.equal(finalRemaining, 4)
+  }
+
+  @Test()
+  public async shouldBeAbleToCompareAndConditionallyUpdateResetTime({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { month: 1000 } })
+      .addRule({ type: 'month', limit: 100 })
+
+    let updateCount = 0
+
+    await limiter.schedule(async ({ target }) => {
+      const apiResetIn = 5
+      const apiResetAt = Date.now() + apiResetIn * 1000
+      const ourResetAt = await target.getResetAt('month')
+
+      if (Math.abs(apiResetAt - ourResetAt) > 100) {
+        await target.updateResetAt(apiResetIn, 'month')
+
+        updateCount++
+      }
+
+      return 'ok'
+    })
+
+    assert.equal(updateCount, 1)
+  }
+
+  @Test()
+  public async shouldWorkWithDifferentRuleTypesForGetRemaining({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 100, minute: 200 } })
+      .addRule({ type: 'second', limit: 5 })
+      .addRule({ type: 'minute', limit: 10 })
+
+    await limiter.schedule(async ({ target }) => {
+      const secondRemaining = await target.getRemaining('second')
+      const minuteRemaining = await target.getRemaining('minute')
+
+      assert.equal(secondRemaining, 4)
+      assert.equal(minuteRemaining, 9)
+
+      return 'ok'
+    })
+  }
+
+  @Test()
+  public async shouldWorkWithTargetsForInspectionMethods({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { minute: 1000 } })
+      .addTarget({ rules: [{ type: 'minute', limit: 10 }], metadata: { baseUrl: 'http://api0.com' } })
+
+    await limiter.schedule(async ({ target }) => {
+      const remaining = await target.getRemaining('minute')
+      const resetAt = await target.getResetAt('minute')
+
+      assert.equal(remaining, 9)
+      assert.isAtLeast(resetAt, Date.now())
+
+      return 'ok'
+    })
   }
 }
