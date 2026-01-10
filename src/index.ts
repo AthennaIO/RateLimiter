@@ -11,4 +11,5 @@ export * from '#src/types'
 
 export * from '#src/ratelimiter/RateLimiter'
 export * from '#src/ratelimiter/RateLimitStore'
+export * from '#src/ratelimiter/RateLimitTarget'
 export * from '#src/ratelimiter/RateLimiterBuilder'
