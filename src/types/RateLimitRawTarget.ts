@@ -9,7 +9,7 @@
 
 import type { RateLimitRule } from '#src/types'
 
-export type RateLimitTarget = {
+export type RateLimitRawTarget = {
   /**
    * The rate limit target ID. By default this will be created by creating
    * a hash from the target metadata object, but you can also define your
@@ -24,7 +24,7 @@ export type RateLimitTarget = {
    * implementation you can create not only API rotations but also API
    * Keys rotations at the same time.
    */
-  metadata: Record<string, any>
+  metadata?: Record<string, any>
 
   /**
    * Custom rate limit rules for this target. If not defined,

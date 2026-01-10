@@ -11,19 +11,19 @@ import type {
   QueueItem,
   RateLimitRule,
   ScheduleOptions,
-  RateLimitTarget,
   RateLimitRetryCtx,
   RateLimiterOptions,
+  RateLimitRawTarget,
+  RateLimitPendingCtx,
   RateLimitScheduleCtx,
   RateLimitStoreOptions,
-  RateLimitRetryDecision,
-  RateLimitPendingCtx
+  RateLimitRetryDecision
 } from '#src/types'
 
 import { debug } from '#src/debug'
-import { Config } from '@athenna/config'
+import { Macroable, Options } from '@athenna/common'
 import { RateLimitStore } from '#src/ratelimiter/RateLimitStore'
-import { Json, String, Macroable, Options } from '@athenna/common'
+import { RateLimitTarget } from '#src/ratelimiter/RateLimitTarget'
 import { MissingKeyException } from '#src/exceptions/MissingKeyException'
 import { MissingRuleException } from '#src/exceptions/MissingRuleException'
 import { MissingStoreException } from '#src/exceptions/MissingStoreException'
@@ -226,16 +226,12 @@ export class RateLimiterBuilder extends Macroable {
    * await limiter.schedule(() => {...})
    * ```
    */
-  public addTarget(target: RateLimitTarget) {
+  public addTarget(raw: RateLimitRawTarget) {
     if (!this.options.targets) {
       this.options.targets = []
     }
 
-    if (!target.id) {
-      target.id = this.getTargetId(target)
-    }
-
-    this.options.targets.push(target)
+    this.options.targets.push(new RateLimitTarget(raw, this.options))
 
     return this
   }
@@ -273,8 +269,8 @@ export class RateLimiterBuilder extends Macroable {
    * await limiter.schedule(() => {...})
    * ```
    */
-  public setTargets(targets: RateLimitTarget[]) {
-    targets.forEach(target => this.addTarget(target))
+  public setTargets(raws: RateLimitRawTarget[]) {
+    raws.forEach(raw => this.addTarget(raw))
 
     return this
   }
@@ -509,21 +505,21 @@ export class RateLimiterBuilder extends Macroable {
   }
 
   /**
-   * Create a custom id for an target by reading the metadata object.
-   * The object will always be sorted by keys.
+   * Get the target instance from a raw target. This method doesn't register the
+   * target in the limiter, it only returns the target instance.
+   *
+   * @example
+   * ```ts
+   * const limiter = RateLimiter.build()
+   *   .store('memory')
+   *   .key('request:/profile')
+   *
+   * const api1 = { metadata: { baseUrl: 'http://api1.com' } }
+   * const key = limiter.getTarget(api1).getKey()
+   * ```
    */
-  public getTargetId(target: RateLimitTarget) {
-    return String.hash(JSON.stringify(Json.sort(target.metadata)), {
-      key: Config.get('app.key', 'ratelimiter')
-    })
-  }
-
-  /**
-   * Create a custom key for an target to be used to map the
-   * target rules into the cache.
-   */
-  public createTargetKey(target: RateLimitTarget) {
-    return `${this.options.key}:${this.getTargetId(target)}`
+  public getTarget(raw: RateLimitRawTarget) {
+    return new RateLimitTarget(raw, this.options)
   }
 
   /**
@@ -632,19 +628,19 @@ export class RateLimiterBuilder extends Macroable {
       const nextItem = this.queue[0]
 
       for (const i of this.createIdxBySelectionStrategy(nextItem)) {
-        const key = this.createTargetKey(this.options.targets[i])
-
-        const rules = this.options.targets[i].rules?.length
-          ? this.options.targets[i].rules
-          : this.options.rules
+        const possibleTarget = this.options.targets[i]
+        const key = possibleTarget.getKey()
 
         try {
-          const res = await this.options.store.tryReserve(key, rules)
+          const res = await this.options.store.tryReserve(
+            key,
+            possibleTarget.rules
+          )
 
           this.storeErrorCount = 0
 
           if (res.allowed) {
-            target = this.options.targets[i]
+            target = possibleTarget
 
             if (this.options.targetSelectionStrategy === 'round_robin') {
               this.rrIndex = (i + 1) % this.options.targets.length
@@ -698,43 +694,8 @@ export class RateLimiterBuilder extends Macroable {
 
       this.active++
 
-      const targetKey = this.createTargetKey(target)
-      const rules = target.rules?.length ? target.rules : this.options.rules
-
-      const enrichedTarget = {
-        ...target,
-        getRemaining: async (ruleType: RateLimitRule['type']) => {
-          return this.options.store!.getRemaining(targetKey, ruleType, rules)
-        },
-        getResetAt: async (ruleType: RateLimitRule['type']) => {
-          return this.options.store!.getResetAt(targetKey, ruleType, rules)
-        },
-        updateRemaining: async (
-          remaining: number,
-          ruleType: RateLimitRule['type']
-        ) => {
-          await this.options.store!.setRemaining(
-            targetKey,
-            ruleType,
-            remaining,
-            rules
-          )
-        },
-        updateResetAt: async (
-          secondsUntilReset: number,
-          ruleType: RateLimitRule['type']
-        ) => {
-          await this.options.store!.setResetAt(
-            targetKey,
-            ruleType,
-            secondsUntilReset,
-            rules
-          )
-        }
-      }
-
       Promise.resolve()
-        .then(() => item.run({ signal: item.signal, target: enrichedTarget }))
+        .then(() => item.run({ signal: item.signal, target }))
         .then(result => {
           this.releaseTask({ isToScheduleTick: true })
 
@@ -811,49 +772,10 @@ export class RateLimiterBuilder extends Macroable {
 
     this.active++
 
-    const implicitTarget = {
-      id: '__implicit__',
-      metadata: {},
-      getRemaining: async (ruleType: RateLimitRule['type']) => {
-        return this.options.store!.getRemaining(
-          this.options.key,
-          ruleType,
-          this.options.rules
-        )
-      },
-      getResetAt: async (ruleType: RateLimitRule['type']) => {
-        return this.options.store!.getResetAt(
-          this.options.key,
-          ruleType,
-          this.options.rules
-        )
-      },
-      updateRemaining: async (
-        remaining: number,
-        ruleType: RateLimitRule['type']
-      ) => {
-        await this.options.store!.setRemaining(
-          this.options.key,
-          ruleType,
-          remaining,
-          this.options.rules
-        )
-      },
-      updateResetAt: async (
-        secondsUntilReset: number,
-        ruleType: RateLimitRule['type']
-      ) => {
-        await this.options.store!.setResetAt(
-          this.options.key,
-          ruleType,
-          secondsUntilReset,
-          this.options.rules
-        )
-      }
-    }
+    const target = new RateLimitTarget({ id: '__implicit__' }, this.options)
 
     Promise.resolve()
-      .then(() => item.run({ signal: item.signal, target: implicitTarget }))
+      .then(() => item.run({ signal: item.signal, target }))
       .then(result => {
         this.releaseTask({ isToScheduleTick: true })
 
@@ -976,7 +898,7 @@ export class RateLimiterBuilder extends Macroable {
       return
     }
 
-    const key = this.createTargetKey(options.target)
+    const key = options.target.getKey()
 
     const ctx: RateLimitRetryCtx = {
       key,
