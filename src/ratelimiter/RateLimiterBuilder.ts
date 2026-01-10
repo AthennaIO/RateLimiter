@@ -698,8 +698,43 @@ export class RateLimiterBuilder extends Macroable {
 
       this.active++
 
+      const targetKey = this.createTargetKey(target)
+      const rules = target.rules?.length ? target.rules : this.options.rules
+
+      const enrichedTarget = {
+        ...target,
+        getRemaining: async (ruleType: RateLimitRule['type']) => {
+          return this.options.store!.getRemaining(targetKey, ruleType, rules)
+        },
+        getResetAt: async (ruleType: RateLimitRule['type']) => {
+          return this.options.store!.getResetAt(targetKey, ruleType, rules)
+        },
+        updateRemaining: async (
+          remaining: number,
+          ruleType: RateLimitRule['type']
+        ) => {
+          await this.options.store!.setRemaining(
+            targetKey,
+            ruleType,
+            remaining,
+            rules
+          )
+        },
+        updateResetAt: async (
+          secondsUntilReset: number,
+          ruleType: RateLimitRule['type']
+        ) => {
+          await this.options.store!.setResetAt(
+            targetKey,
+            ruleType,
+            secondsUntilReset,
+            rules
+          )
+        }
+      }
+
       Promise.resolve()
-        .then(() => item.run({ signal: item.signal, target }))
+        .then(() => item.run({ signal: item.signal, target: enrichedTarget }))
         .then(result => {
           this.releaseTask({ isToScheduleTick: true })
 
@@ -776,8 +811,49 @@ export class RateLimiterBuilder extends Macroable {
 
     this.active++
 
+    const implicitTarget = {
+      id: '__implicit__',
+      metadata: {},
+      getRemaining: async (ruleType: RateLimitRule['type']) => {
+        return this.options.store!.getRemaining(
+          this.options.key,
+          ruleType,
+          this.options.rules
+        )
+      },
+      getResetAt: async (ruleType: RateLimitRule['type']) => {
+        return this.options.store!.getResetAt(
+          this.options.key,
+          ruleType,
+          this.options.rules
+        )
+      },
+      updateRemaining: async (
+        remaining: number,
+        ruleType: RateLimitRule['type']
+      ) => {
+        await this.options.store!.setRemaining(
+          this.options.key,
+          ruleType,
+          remaining,
+          this.options.rules
+        )
+      },
+      updateResetAt: async (
+        secondsUntilReset: number,
+        ruleType: RateLimitRule['type']
+      ) => {
+        await this.options.store!.setResetAt(
+          this.options.key,
+          ruleType,
+          secondsUntilReset,
+          this.options.rules
+        )
+      }
+    }
+
     Promise.resolve()
-      .then(() => item.run({ signal: item.signal }))
+      .then(() => item.run({ signal: item.signal, target: implicitTarget }))
       .then(result => {
         this.releaseTask({ isToScheduleTick: true })
 
