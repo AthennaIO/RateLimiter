@@ -282,7 +282,28 @@ export class RateLimitStore extends Macroable {
     }
 
     const earliestTimestamp = bucket[0]
+    const oneYearAgo = now - 365 * 86_400_000
+    const oneYearFromNow = now + 365 * 86_400_000
+
+    if (earliestTimestamp < oneYearAgo || earliestTimestamp > oneYearFromNow) {
+      debug(
+        'corrupted timestamp detected (%d), returning current time + window',
+        earliestTimestamp
+      )
+
+      return now + window
+    }
+
     const resetAt = earliestTimestamp + window
+
+    if (resetAt < oneYearAgo || resetAt > oneYearFromNow + window) {
+      debug(
+        'calculated resetAt is invalid (%d), falling back to now + window',
+        resetAt
+      )
+
+      return now + window
+    }
 
     debug('reset time for rule type %s: %d', ruleType, resetAt)
 
@@ -330,13 +351,57 @@ export class RateLimitStore extends Macroable {
       return
     }
 
+    const maxSeconds = 365 * 24 * 60 * 60
+
+    if (secondsUntilReset < 0 || secondsUntilReset > maxSeconds) {
+      debug(
+        'invalid secondsUntilReset (%d), must be between 0 and %d',
+        secondsUntilReset,
+        maxSeconds
+      )
+
+      return
+    }
+
     const targetResetAt = now + secondsUntilReset * 1000
     const earliestTimestamp = bucket[0]
+    const oneYearAgo = now - 365 * 86_400_000
+    const oneYearFromNow = now + 365 * 86_400_000
+
+    if (earliestTimestamp < oneYearAgo || earliestTimestamp > oneYearFromNow) {
+      debug(
+        'corrupted timestamp detected in bucket (%d), skipping shift',
+        earliestTimestamp
+      )
+
+      return
+    }
+
     const currentResetAt = earliestTimestamp + window
     const timeDiff = targetResetAt - currentResetAt
 
+    if (Math.abs(timeDiff) > 365 * 86_400_000) {
+      debug(
+        'time difference too large (%d ms), skipping shift to prevent corruption',
+        timeDiff
+      )
+
+      return
+    }
+
     for (let i = 0; i < bucket.length; i++) {
-      bucket[i] = bucket[i] + timeDiff
+      const newTimestamp = bucket[i] + timeDiff
+
+      if (newTimestamp < oneYearAgo || newTimestamp > oneYearFromNow + window) {
+        debug(
+          'shifted timestamp would be invalid (%d), aborting operation',
+          newTimestamp
+        )
+
+        return
+      }
+
+      bucket[i] = newTimestamp
     }
 
     await cache.set(key, JSON.stringify(buckets))
