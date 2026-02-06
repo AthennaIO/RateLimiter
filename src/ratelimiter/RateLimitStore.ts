@@ -10,7 +10,7 @@
 import { debug } from '#src/debug'
 import { Cache } from '@athenna/cache'
 import { WINDOW_MS } from '#src/constants/window'
-import { Sleep, Macroable } from '@athenna/common'
+import { Uuid, Sleep, Macroable } from '@athenna/common'
 import type { Reserve, RateLimitRule, RateLimitStoreOptions } from '#src/types'
 
 export class RateLimitStore extends Macroable {
@@ -421,12 +421,17 @@ export class RateLimitStore extends Macroable {
   }
 
   /**
-   * Acquire a distributed lock for the given key. Returns true if lock
-   * was acquired.
+   * Stores the lock value for proper cleanup
+   */
+  private lockValues: Map<string, string> = new Map()
+
+  /**
+   * Acquire a distributed lock for the given key. Uses UUID
+   * to ensure only one process can acquire the lock.
    */
   private async acquireLock(key: string, maxRetries = 50) {
     const lockKey = `${key}:lock`
-    const lockValue = `${Date.now()}`
+    const lockValue = Uuid.generate()
     const cache = Cache.store(this.options.store)
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -434,33 +439,66 @@ export class RateLimitStore extends Macroable {
         const existing = await cache.get(lockKey)
 
         if (!existing) {
-          await cache.set(lockKey, lockValue, { ttl: 500 })
+          await cache.set(lockKey, lockValue, { ttl: 1000 })
+
+          await Sleep.for(5).milliseconds().wait()
 
           const check = await cache.get(lockKey)
 
           if (check === lockValue) {
+            debug('lock acquired for key %s with value %s', lockKey, lockValue)
+
+            this.lockValues.set(key, lockValue)
+
             return true
           }
+
+          debug(
+            'lock acquisition race detected for key %s: expected %s, got %s',
+            lockKey,
+            lockValue,
+            check
+          )
         }
 
-        await Sleep.for(10).milliseconds().wait()
+        const backoff = Math.min(5 + attempt * 2, 50)
+
+        await Sleep.for(backoff).milliseconds().wait()
       } catch (error) {
         debug('error acquiring lock for key %s: %o', lockKey, error)
       }
     }
 
+    debug(
+      'failed to acquire lock for key %s after %d attempts',
+      lockKey,
+      maxRetries
+    )
     return false
   }
 
   /**
-   * Release the distributed lock for the given key.
+   * Release the distributed lock for the given key. Only releases if we
+   * own the lock (our UUID matches).
    */
   private async releaseLock(key: string) {
     const lockKey = `${key}:lock`
     const cache = Cache.store(this.options.store)
+    const expectedValue = this.lockValues.get(key)
 
     try {
-      await cache.delete(lockKey)
+      if (expectedValue) {
+        const currentValue = await cache.get(lockKey)
+
+        if (currentValue === expectedValue) {
+          await cache.delete(lockKey)
+          debug('lock released for key %s', lockKey)
+        }
+
+        this.lockValues.delete(key)
+      } else {
+        await cache.delete(lockKey)
+      }
     } catch (error) {
       debug('error releasing lock for key %s: %o', lockKey, error)
     }
