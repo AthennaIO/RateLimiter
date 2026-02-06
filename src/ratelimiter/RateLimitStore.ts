@@ -9,8 +9,8 @@
 
 import { debug } from '#src/debug'
 import { Cache } from '@athenna/cache'
-import { Macroable } from '@athenna/common'
 import { WINDOW_MS } from '#src/constants/window'
+import { Sleep, Macroable } from '@athenna/common'
 import type { Reserve, RateLimitRule, RateLimitStoreOptions } from '#src/types'
 
 export class RateLimitStore extends Macroable {
@@ -102,55 +102,66 @@ export class RateLimitStore extends Macroable {
       rules
     )
 
-    let wait = 0
-    const now = Date.now()
-    const cache = Cache.store(this.options.store)
-    const cooldown = await this.getCooldown(key)
+    const lockAcquired = await this.acquireLock(key)
 
-    if (Number.isFinite(cooldown) && cooldown > now) {
-      return { allowed: false, waitMs: cooldown - now }
+    if (!lockAcquired) {
+      debug('failed to acquire lock for key %s, returning retry signal', key)
+      return { allowed: false, waitMs: 50 }
     }
 
-    await cache.delete(`${key}:cooldown`)
+    try {
+      let wait = 0
+      const now = Date.now()
+      const cache = Cache.store(this.options.store)
+      const cooldown = await this.getCooldown(key)
 
-    const buckets = await this.getOrInit(key, rules)
-
-    for (let i = 0; i < rules.length; i++) {
-      const bucket = buckets[i]
-      const window = this.options.windowMs[rules[i].type]
-
-      while (bucket.length && bucket[0] <= now - window) {
-        bucket.shift()
+      if (Number.isFinite(cooldown) && cooldown > now) {
+        return { allowed: false, waitMs: cooldown - now }
       }
 
-      if (bucket.length >= rules[i].limit) {
-        const earliest = bucket[0]
-        const rem = earliest + window - now
+      await cache.delete(`${key}:cooldown`)
 
-        if (rem > wait) {
-          wait = rem
+      const buckets = await this.getOrInit(key, rules)
+
+      for (let i = 0; i < rules.length; i++) {
+        const bucket = buckets[i]
+        const window = this.options.windowMs[rules[i].type]
+
+        while (bucket.length && bucket[0] <= now - window) {
+          bucket.shift()
+        }
+
+        if (bucket.length >= rules[i].limit) {
+          const earliest = bucket[0]
+          const rem = earliest + window - now
+
+          if (rem > wait) {
+            wait = rem
+          }
         }
       }
-    }
 
-    const reserve: Reserve = { allowed: false, waitMs: wait }
+      const reserve: Reserve = { allowed: false, waitMs: wait }
 
-    if (wait > 0) {
+      if (wait > 0) {
+        await cache.set(key, JSON.stringify(buckets))
+
+        return reserve
+      }
+
+      for (let i = 0; i < rules.length; i++) {
+        buckets[i].push(now)
+      }
+
       await cache.set(key, JSON.stringify(buckets))
 
+      reserve.waitMs = 0
+      reserve.allowed = true
+
       return reserve
+    } finally {
+      await this.releaseLock(key)
     }
-
-    for (let i = 0; i < rules.length; i++) {
-      buckets[i].push(now)
-    }
-
-    await cache.set(key, JSON.stringify(buckets))
-
-    reserve.waitMs = 0
-    reserve.allowed = true
-
-    return reserve
   }
 
   /**
@@ -407,5 +418,51 @@ export class RateLimitStore extends Macroable {
     await cache.set(key, JSON.stringify(buckets))
 
     debug('shifted timestamps by %d ms for rule type %s', timeDiff, ruleType)
+  }
+
+  /**
+   * Acquire a distributed lock for the given key. Returns true if lock
+   * was acquired.
+   */
+  private async acquireLock(key: string, maxRetries = 50) {
+    const lockKey = `${key}:lock`
+    const lockValue = `${Date.now()}`
+    const cache = Cache.store(this.options.store)
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const existing = await cache.get(lockKey)
+
+        if (!existing) {
+          await cache.set(lockKey, lockValue, { ttl: 500 })
+
+          const check = await cache.get(lockKey)
+
+          if (check === lockValue) {
+            return true
+          }
+        }
+
+        await Sleep.for(10).milliseconds().wait()
+      } catch (error) {
+        debug('error acquiring lock for key %s: %o', lockKey, error)
+      }
+    }
+
+    return false
+  }
+
+  /**
+   * Release the distributed lock for the given key.
+   */
+  private async releaseLock(key: string) {
+    const lockKey = `${key}:lock`
+    const cache = Cache.store(this.options.store)
+
+    try {
+      await cache.delete(lockKey)
+    } catch (error) {
+      debug('error releasing lock for key %s: %o', lockKey, error)
+    }
   }
 }
