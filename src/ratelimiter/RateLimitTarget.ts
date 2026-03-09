@@ -102,7 +102,8 @@ export class RateLimitTarget extends Macroable {
 
   /**
    * Manually update the reset time for a specific rule type based on API headers.
-   * This shifts all timestamps in the bucket to align with the API's reset schedule.
+   * This rebuilds the bucket so its reset window matches the external schedule
+   * without changing the current used count.
    */
   public async updateResetAt(seconds: number, type: RateLimitRule['type']) {
     await this.options.store!.setResetAt(
@@ -111,5 +112,19 @@ export class RateLimitTarget extends Macroable {
       seconds,
       this.rules
     )
+  }
+
+  /**
+   * Atomically sync the target rate limit state from external metadata, such
+   * as API headers, so remaining and resetAt stay aligned.
+   */
+  public async syncState(
+    type: RateLimitRule['type'],
+    state: {
+      remaining: number
+      secondsUntilReset?: number
+    }
+  ) {
+    await this.options.store!.syncState(this.getKey(), type, state, this.rules)
   }
 }

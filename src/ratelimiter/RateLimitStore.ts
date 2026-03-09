@@ -183,34 +183,39 @@ export class RateLimitStore extends Macroable {
       key
     )
 
-    const now = Date.now()
-    const cache = Cache.store(this.options.store)
-    const buckets = await this.getOrInit(key, rules)
-    const ruleIndex = rules.findIndex(rule => rule.type === ruleType)
+    await this.runWithLock(key, async () => {
+      const now = Date.now()
+      const cache = Cache.store(this.options.store)
+      const buckets = await this.getOrInit(key, rules)
+      const ruleIndex = rules.findIndex(rule => rule.type === ruleType)
 
-    if (ruleIndex === -1) {
-      debug('rule type %s not found for key %s', ruleType, key)
-      return
-    }
+      if (ruleIndex === -1) {
+        debug('rule type %s not found for key %s', ruleType, key)
+        return
+      }
 
-    const rule = rules[ruleIndex]
-    const bucket = buckets[ruleIndex]
-    const used = Math.max(0, rule.limit - remaining)
+      const rule = rules[ruleIndex]
+      const bucket = buckets[ruleIndex]
+      const window = this.options.windowMs[rule.type]
 
-    bucket.length = 0
+      this.pruneExpiredEntries(bucket, window, now)
 
-    for (let i = 0; i < used; i++) {
-      bucket.push(now)
-    }
+      const resetAt = bucket.length ? bucket[0] + window : now + window
+      const boundedRemaining = this.normalizeRemaining(remaining, rule.limit)
+      const used = rule.limit - boundedRemaining
 
-    await cache.set(key, JSON.stringify(buckets))
+      this.rebuildBucket(bucket, used, resetAt, window)
 
-    debug(
-      'updated bucket for rule type %s: %d used, %d remaining',
-      ruleType,
-      used,
-      remaining
-    )
+      await cache.set(key, JSON.stringify(buckets))
+
+      debug(
+        'updated bucket for rule type %s: %d used, %d remaining, resetAt %d',
+        ruleType,
+        used,
+        boundedRemaining,
+        resetAt
+      )
+    })
   }
 
   /**
@@ -323,7 +328,8 @@ export class RateLimitStore extends Macroable {
 
   /**
    * Manually update the reset time for a specific rule type based on API headers.
-   * This shifts all timestamps in the bucket to align with the API's reset schedule.
+   * This rebuilds the bucket so its reset window matches the external schedule
+   * without changing the current used count.
    */
   public async setResetAt(
     key: string,
@@ -339,85 +345,114 @@ export class RateLimitStore extends Macroable {
       key
     )
 
-    const now = Date.now()
-    const cache = Cache.store(this.options.store)
-    const buckets = await this.getOrInit(key, rules)
-    const ruleIndex = rules.findIndex(rule => rule.type === ruleType)
+    await this.runWithLock(key, async () => {
+      const now = Date.now()
+      const cache = Cache.store(this.options.store)
+      const buckets = await this.getOrInit(key, rules)
+      const ruleIndex = rules.findIndex(rule => rule.type === ruleType)
 
-    if (ruleIndex === -1) {
-      debug('rule type %s not found for key %s', ruleType, key)
-      return
-    }
-
-    const rule = rules[ruleIndex]
-    const bucket = buckets[ruleIndex]
-    const window = this.options.windowMs[rule.type]
-
-    while (bucket.length && bucket[0] <= now - window) {
-      bucket.shift()
-    }
-
-    if (bucket.length === 0) {
-      debug('bucket empty, nothing to shift')
-      return
-    }
-
-    const maxSeconds = 365 * 24 * 60 * 60
-
-    if (secondsUntilReset < 0 || secondsUntilReset > maxSeconds) {
-      debug(
-        'invalid secondsUntilReset (%d), must be between 0 and %d',
-        secondsUntilReset,
-        maxSeconds
-      )
-
-      return
-    }
-
-    const targetResetAt = now + secondsUntilReset * 1000
-    const earliestTimestamp = bucket[0]
-    const oneYearAgo = now - 365 * 86_400_000
-    const oneYearFromNow = now + 365 * 86_400_000
-
-    if (earliestTimestamp < oneYearAgo || earliestTimestamp > oneYearFromNow) {
-      debug(
-        'corrupted timestamp detected in bucket (%d), skipping shift',
-        earliestTimestamp
-      )
-
-      return
-    }
-
-    const currentResetAt = earliestTimestamp + window
-    const timeDiff = targetResetAt - currentResetAt
-
-    if (Math.abs(timeDiff) > 365 * 86_400_000) {
-      debug(
-        'time difference too large (%d ms), skipping shift to prevent corruption',
-        timeDiff
-      )
-
-      return
-    }
-
-    for (let i = 0; i < bucket.length; i++) {
-      const newTimestamp = bucket[i] + timeDiff
-
-      if (newTimestamp < oneYearAgo || newTimestamp > oneYearFromNow + window) {
-        debug(
-          'shifted timestamp would be invalid (%d), aborting operation',
-          newTimestamp
-        )
-
+      if (ruleIndex === -1) {
+        debug('rule type %s not found for key %s', ruleType, key)
         return
       }
 
-      bucket[i] = newTimestamp
-    }
+      const rule = rules[ruleIndex]
+      const bucket = buckets[ruleIndex]
+      const window = this.options.windowMs[rule.type]
 
-    await cache.set(key, JSON.stringify(buckets))
+      this.pruneExpiredEntries(bucket, window, now)
 
-    debug('shifted timestamps by %d ms for rule type %s', timeDiff, ruleType)
+      if (bucket.length === 0) {
+        debug('bucket empty, nothing to shift')
+        return
+      }
+
+      const targetResetAt = this.getTargetResetAt(now, secondsUntilReset)
+
+      if (!targetResetAt) {
+        return
+      }
+
+      this.rebuildBucket(bucket, bucket.length, targetResetAt, window)
+
+      await cache.set(key, JSON.stringify(buckets))
+
+      debug(
+        'rebuilt bucket for rule type %s with %d used requests and resetAt %d',
+        ruleType,
+        bucket.length,
+        targetResetAt
+      )
+    })
+  }
+
+  /**
+   * Atomically sync the current rate limit state for a specific rule type.
+   * This is the safest way to mirror external API headers because it updates
+   * the bucket count and reset window in a single locked operation.
+   */
+  public async syncState(
+    key: string,
+    ruleType: RateLimitRule['type'],
+    state: {
+      remaining: number
+      secondsUntilReset?: number
+    },
+    rules: RateLimitRule[]
+  ) {
+    debug(
+      'syncing rate limit state for rule type %s in %s store for key %s with state %o',
+      ruleType,
+      this.options.store,
+      key,
+      state
+    )
+
+    await this.runWithLock(key, async () => {
+      const now = Date.now()
+      const cache = Cache.store(this.options.store)
+      const buckets = await this.getOrInit(key, rules)
+      const ruleIndex = rules.findIndex(rule => rule.type === ruleType)
+
+      if (ruleIndex === -1) {
+        debug('rule type %s not found for key %s', ruleType, key)
+        return
+      }
+
+      const rule = rules[ruleIndex]
+      const bucket = buckets[ruleIndex]
+      const window = this.options.windowMs[rule.type]
+
+      this.pruneExpiredEntries(bucket, window, now)
+
+      const boundedRemaining = this.normalizeRemaining(
+        state.remaining,
+        rule.limit
+      )
+      const used = rule.limit - boundedRemaining
+      const targetResetAt =
+        state.secondsUntilReset !== undefined
+          ? this.getTargetResetAt(now, state.secondsUntilReset)
+          : bucket.length
+          ? bucket[0] + window
+          : now + window
+
+      if (!targetResetAt) {
+        return
+      }
+
+      this.rebuildBucket(bucket, used, targetResetAt, window)
+
+      await cache.set(key, JSON.stringify(buckets))
+
+      debug(
+        'synced bucket for rule type %s: %d used, %d remaining, resetAt %d',
+        ruleType,
+        used,
+        boundedRemaining,
+        targetResetAt
+      )
+    })
   }
 
   /**
@@ -501,6 +536,74 @@ export class RateLimitStore extends Macroable {
       }
     } catch (error) {
       debug('error releasing lock for key %s: %o', lockKey, error)
+    }
+  }
+
+  /**
+   * Serialize write operations for a target key so remaining and resetAt
+   * updates cannot corrupt each other when requests finish concurrently.
+   */
+  private async runWithLock(key: string, callback: () => Promise<any>) {
+    const lockAcquired = await this.acquireLock(key)
+
+    if (!lockAcquired) {
+      debug('failed to acquire mutation lock for key %s', key)
+      return
+    }
+
+    try {
+      await callback()
+    } finally {
+      await this.releaseLock(key)
+    }
+  }
+
+  private pruneExpiredEntries(bucket: number[], window: number, now: number) {
+    while (bucket.length && bucket[0] <= now - window) {
+      bucket.shift()
+    }
+  }
+
+  private normalizeRemaining(remaining: number, limit: number) {
+    if (!Number.isFinite(remaining)) {
+      return limit
+    }
+
+    return Math.min(limit, Math.max(0, Math.trunc(remaining)))
+  }
+
+  private getTargetResetAt(now: number, secondsUntilReset: number) {
+    const maxSeconds = 365 * 24 * 60 * 60
+
+    if (
+      !Number.isFinite(secondsUntilReset) ||
+      secondsUntilReset < 0 ||
+      secondsUntilReset > maxSeconds
+    ) {
+      debug(
+        'invalid secondsUntilReset (%d), must be between 0 and %d',
+        secondsUntilReset,
+        maxSeconds
+      )
+
+      return null
+    }
+
+    return now + Math.trunc(secondsUntilReset * 1000)
+  }
+
+  private rebuildBucket(
+    bucket: number[],
+    used: number,
+    resetAt: number,
+    window: number
+  ) {
+    const timestamp = resetAt - window
+
+    bucket.length = 0
+
+    for (let i = 0; i < used; i++) {
+      bucket.push(timestamp)
     }
   }
 }

@@ -1346,6 +1346,60 @@ export class RateLimiterBuilderTest {
   }
 
   @Test()
+  public async shouldPreserveResetAtWhenUpdatingRemainingAfterResetSync({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 500 } })
+      .addRule({ type: 'second', limit: 10 })
+
+    let resetAtBeforeRemainingUpdate = 0
+    let resetAtAfterRemainingUpdate = 0
+    let remainingAfterSync = 0
+
+    await limiter.schedule(async ({ target }) => {
+      await target.updateResetAt(1, 'second')
+
+      resetAtBeforeRemainingUpdate = await target.getResetAt('second')
+
+      await target.updateRemaining(3, 'second')
+
+      resetAtAfterRemainingUpdate = await target.getResetAt('second')
+      remainingAfterSync = await target.getRemaining('second')
+
+      return 'ok'
+    })
+
+    assert.equal(remainingAfterSync, 3)
+    assert.equal(resetAtAfterRemainingUpdate, resetAtBeforeRemainingUpdate)
+  }
+
+  @Test()
+  public async shouldBeAbleToSyncRemainingAndResetAtAtomically({ assert }: Context) {
+    const limiter = RateLimiter.build()
+      .key('request:api-key:/profile')
+      .store('memory', { windowMs: { second: 500 } })
+      .addRule({ type: 'second', limit: 10 })
+
+    await limiter.schedule(async ({ target }) => {
+      const startedAt = Date.now()
+
+      await target.syncState('second', {
+        remaining: 3,
+        secondsUntilReset: 1
+      })
+
+      const remaining = await target.getRemaining('second')
+      const resetAt = await target.getResetAt('second')
+
+      assert.equal(remaining, 3)
+      assert.isAtLeast(resetAt, startedAt + 900)
+      assert.isAtMost(resetAt, startedAt + 1100)
+
+      return 'ok'
+    })
+  }
+
+  @Test()
   public async shouldBeAbleToCompareAndConditionallyUpdateRemaining({ assert }: Context) {
     const limiter = RateLimiter.build()
       .key('request:api-key:/profile')
