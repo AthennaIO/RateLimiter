@@ -64,8 +64,9 @@ export class RateLimiterBuilder extends Macroable {
 
   /**
    * Index for when using round_robin selection strategy.
+   * Starts as null to indicate it has not been randomly initialized yet.
    */
-  private rrIndex = 0
+  private rrIndex: number | null = null
 
   /**
    * Holds the setTimeout id to be able to disable it
@@ -553,6 +554,9 @@ export class RateLimiterBuilder extends Macroable {
 
     switch (this.options.targetSelectionStrategy) {
       case 'round_robin':
+        if (this.rrIndex === null) {
+          this.rrIndex = Math.floor(Math.random() * this.options.targets.length)
+        }
         indexes = this.createRoundRobinIdx()
         break
       case 'first_available':
