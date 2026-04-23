@@ -792,6 +792,103 @@ export class RateLimiterBuilderTest {
   }
 
   @Test()
+  public async shouldRotateTargetsSequentiallyWhenUsingRoundRobinStrategy({ assert }: Context) {
+    const targets = [
+      { id: 'api1', metadata: { baseUrl: 'http://api1.com' } },
+      { id: 'api2', metadata: { baseUrl: 'http://api2.com' } },
+      { id: 'api3', metadata: { baseUrl: 'http://api3.com' } }
+    ]
+
+    const limiter = RateLimiter.build()
+      .store('memory', { windowMs: { second: 1000 } })
+      .key('request:rr-rotation')
+      .targetSelectionStrategy('round_robin')
+      .addRule({ type: 'second', limit: 100 })
+      .setTargets(targets)
+
+    const results: string[] = []
+
+    for (let i = 0; i < 6; i++) {
+      const result = await limiter.schedule(({ target }) => target.metadata.baseUrl)
+      results.push(result)
+    }
+
+    const urls = ['http://api1.com', 'http://api2.com', 'http://api3.com']
+    const startIdx = urls.indexOf(results[0])
+    const expected = Array.from({ length: 6 }, (_, i) => urls[(startIdx + i) % 3])
+
+    assert.deepEqual(results, expected)
+  }
+
+  @Test()
+  public async shouldRotateTargetsConcurrentlyWhenUsingRoundRobinStrategy({ assert }: Context) {
+    const api1 = { id: 'api1', metadata: { baseUrl: 'http://api1.com' } }
+    const api2 = { id: 'api2', metadata: { baseUrl: 'http://api2.com' } }
+
+    const limiter = RateLimiter.build()
+      .maxConcurrent(2)
+      .store('memory', { windowMs: { second: 100 } })
+      .key('request:rr-rotation-concurrent')
+      .targetSelectionStrategy('round_robin')
+      .addRule({ type: 'second', limit: 10 })
+      .addTarget(api1)
+      .addTarget(api2)
+
+    const used: string[] = []
+    const barrier = this.createBarrier()
+
+    const run = async ({ target }) => {
+      used.push(target.metadata.baseUrl)
+      await barrier.wait()
+      return target.metadata.baseUrl
+    }
+
+    const p1 = limiter.schedule(run)
+    const p2 = limiter.schedule(run)
+
+    await this.waitUntil(() => used.length === 2, 10, 1000)
+
+    used.sort()
+
+    assert.deepEqual(used, ['http://api1.com', 'http://api2.com'])
+
+    barrier.release()
+
+    const results = await Promise.all([p1, p2])
+
+    results.sort()
+
+    assert.deepEqual(results, ['http://api1.com', 'http://api2.com'])
+  }
+
+  @Test()
+  public async shouldDistributeStartingTargetAcrossMultipleInstancesWhenUsingRoundRobinStrategy({ assert }: Context) {
+    const api1 = { id: 'api1', metadata: { baseUrl: 'http://api1.com' } }
+    const api2 = { id: 'api2', metadata: { baseUrl: 'http://api2.com' } }
+
+    const firstTargets: string[] = []
+
+    for (let run = 0; run < 20; run++) {
+      const limiter = RateLimiter.build()
+        .store('memory', { windowMs: { second: 1000 } })
+        .key(`request:rr-dist-${run}`)
+        .targetSelectionStrategy('round_robin')
+        .addRule({ type: 'second', limit: 100 })
+        .addTarget(api1)
+        .addTarget(api2)
+
+      const result = await limiter.schedule(({ target }) => target.metadata.baseUrl)
+      firstTargets.push(result)
+    }
+
+    const api1Count = firstTargets.filter(t => t === 'http://api1.com').length
+    const api2Count = firstTargets.filter(t => t === 'http://api2.com').length
+
+    assert.isAbove(api1Count, 0)
+    assert.isAbove(api2Count, 0)
+  }
+
+  @Test()
   public async shouldThrowMissingRuleExceptionIfRateLimiterRulesAndTargetRulesAreNotDefined({ assert }: Context) {
     const limiter = RateLimiter.build()
       .store('memory', { windowMs: { second: 100 } })
