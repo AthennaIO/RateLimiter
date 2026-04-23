@@ -628,7 +628,7 @@ export class RateLimiterBuilder extends Macroable {
 
       const nextItem = this.queue[0]
 
-      if (this.rrIndex === null) {
+      if (this.options.targetSelectionStrategy === 'round_robin' && this.rrIndex === null) {
         this.rrIndex = Math.floor(Math.random() * this.options.targets.length)
       }
 
