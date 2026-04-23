@@ -554,9 +554,6 @@ export class RateLimiterBuilder extends Macroable {
 
     switch (this.options.targetSelectionStrategy) {
       case 'round_robin':
-        if (this.rrIndex === null) {
-          this.rrIndex = Math.floor(Math.random() * this.options.targets.length)
-        }
         indexes = this.createRoundRobinIdx()
         break
       case 'first_available':
@@ -630,6 +627,10 @@ export class RateLimiterBuilder extends Macroable {
       let target: RateLimitTarget = null
 
       const nextItem = this.queue[0]
+
+      if (this.rrIndex === null) {
+        this.rrIndex = Math.floor(Math.random() * this.options.targets.length)
+      }
 
       for (const i of this.createIdxBySelectionStrategy(nextItem)) {
         const possibleTarget = this.options.targets[i]
