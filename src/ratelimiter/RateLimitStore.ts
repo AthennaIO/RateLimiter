@@ -38,15 +38,27 @@ export class RateLimitStore extends Macroable {
   public async getOrInit(key: string, rules: RateLimitRule[]) {
     const cache = Cache.store(this.options.store)
 
-    let buckets = await cache.get(key)
+    const buckets = await cache.get(key)
 
     if (!buckets) {
-      buckets = JSON.stringify(rules.map(() => []))
+      const initialized = JSON.stringify(rules.map(() => []))
 
-      await cache.set(key, buckets)
+      await cache.set(key, initialized)
+
+      return JSON.parse(initialized) as number[][]
     }
 
-    return JSON.parse(buckets) as number[][]
+    const parsed = JSON.parse(buckets) as number[][]
+
+    if (parsed.length !== rules.length) {
+      const reconciled = rules.map((_, i) => parsed[i] ?? [])
+
+      await cache.set(key, JSON.stringify(reconciled))
+
+      return reconciled
+    }
+
+    return parsed
   }
 
   /**
