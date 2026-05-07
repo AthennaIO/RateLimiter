@@ -10,7 +10,7 @@
 import { debug } from '#src/debug'
 import { Cache } from '@athenna/cache'
 import { WINDOW_MS } from '#src/constants/window'
-import { Uuid, Sleep, Macroable } from '@athenna/common'
+import { Uuid, Sleep, Macroable, Is } from '@athenna/common'
 import type { Reserve, RateLimitRule, RateLimitStoreOptions } from '#src/types'
 
 export class RateLimitStore extends Macroable {
@@ -48,10 +48,20 @@ export class RateLimitStore extends Macroable {
       return JSON.parse(initialized) as number[][]
     }
 
-    const parsed = JSON.parse(buckets) as number[][]
+    const parsed = JSON.parse(buckets)
 
-    if (parsed.length !== rules.length) {
-      const reconciled = rules.map((_, i) => parsed[i] ?? [])
+    const isValid = Is.Array(parsed) &&
+      parsed.length === rules.length &&
+      parsed.every(entry => Is.Array(entry))
+
+    if (!isValid) {
+      const src = Is.Array(parsed) ? parsed : []
+
+      const reconciled = rules.map((_, i) => {
+        const entry = src[i]
+
+        return Is.Array(entry) ? entry : []
+      })
 
       await cache.set(key, JSON.stringify(reconciled))
 
