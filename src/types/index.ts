@@ -10,6 +10,7 @@
 export * from '#src/types/Reserve'
 export * from '#src/types/QueueItem'
 export * from '#src/types/RateLimitRule'
+export * from '#src/types/RateLimitBucket'
 export * from '#src/types/ScheduleOptions'
 export * from '#src/types/RateLimitRawTarget'
 export * from '#src/types/RateLimitRetryCtx'
