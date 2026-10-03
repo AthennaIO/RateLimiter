@@ -9,9 +9,15 @@
 
 import { debug } from '#src/debug'
 import { Cache } from '@athenna/cache'
-import { WINDOW_MS } from '#src/constants/window'
 import { Uuid, Sleep, Macroable, Is } from '@athenna/common'
-import type { Reserve, RateLimitRule, RateLimitStoreOptions } from '#src/types'
+import { WINDOW_MS, WINDOW_SLOTS } from '#src/constants/window'
+import type {
+  Reserve,
+  RateLimitRule,
+  RateLimitBucket,
+  RateLimitBucketEntry,
+  RateLimitStoreOptions
+} from '#src/types'
 
 export class RateLimitStore extends Macroable {
   /**
@@ -23,7 +29,7 @@ export class RateLimitStore extends Macroable {
   public constructor(options: RateLimitStoreOptions) {
     super()
 
-    options.windowMs = options.windowMs ?? WINDOW_MS
+    options.windowMs = { ...WINDOW_MS, ...options.windowMs }
 
     this.options = options
   }
@@ -34,41 +40,31 @@ export class RateLimitStore extends Macroable {
 
   /**
    * Get the rate limit buckets from the cache or initialize them.
+   * Invalid buckets and entries are discarded and persisted back.
    */
   public async getOrInit(key: string, rules: RateLimitRule[]) {
     const cache = Cache.store(this.options.store)
+    const cached = await cache.get(key)
+    const parsed = cached ? JSON.parse(cached) : null
+    const src = Is.Array(parsed) ? parsed : []
 
-    const buckets = await cache.get(key)
+    let isDirty = !cached || !Is.Array(parsed) || parsed.length !== rules.length
 
-    if (!buckets) {
-      const initialized = JSON.stringify(rules.map(() => []))
+    const buckets = rules.map((_, i) => {
+      const bucket = this.normalizeBucket(src[i])
 
-      await cache.set(key, initialized)
+      if (bucket !== src[i]) {
+        isDirty = true
+      }
 
-      return JSON.parse(initialized) as number[][]
+      return bucket
+    })
+
+    if (isDirty) {
+      await cache.set(key, JSON.stringify(buckets))
     }
 
-    const parsed = JSON.parse(buckets)
-
-    const isValid = Is.Array(parsed) &&
-      parsed.length === rules.length &&
-      parsed.every(entry => Is.Array(entry))
-
-    if (!isValid) {
-      const src = Is.Array(parsed) ? parsed : []
-
-      const reconciled = rules.map((_, i) => {
-        const entry = src[i]
-
-        return Is.Array(entry) ? entry : []
-      })
-
-      await cache.set(key, JSON.stringify(reconciled))
-
-      return reconciled
-    }
-
-    return parsed
+    return buckets
   }
 
   /**
@@ -149,12 +145,10 @@ export class RateLimitStore extends Macroable {
         const bucket = buckets[i]
         const window = this.options.windowMs[rules[i].type]
 
-        while (bucket.length && bucket[0] <= now - window) {
-          bucket.shift()
-        }
+        this.pruneExpiredEntries(bucket, window, now)
 
-        if (bucket.length >= rules[i].limit) {
-          const earliest = bucket[0]
+        if (this.countEntries(bucket) >= rules[i].limit) {
+          const earliest = bucket[0][0]
           const rem = earliest + window - now
 
           if (rem > wait) {
@@ -172,7 +166,7 @@ export class RateLimitStore extends Macroable {
       }
 
       for (let i = 0; i < rules.length; i++) {
-        buckets[i].push(now)
+        this.addEntry(buckets[i], now, this.options.windowMs[rules[i].type])
       }
 
       await cache.set(key, JSON.stringify(buckets))
@@ -222,7 +216,7 @@ export class RateLimitStore extends Macroable {
 
       this.pruneExpiredEntries(bucket, window, now)
 
-      const resetAt = bucket.length ? bucket[0] + window : now + window
+      const resetAt = bucket.length ? bucket[0][0] + window : now + window
       const boundedRemaining = this.normalizeRemaining(remaining, rule.limit)
       const used = rule.limit - boundedRemaining
 
@@ -269,11 +263,9 @@ export class RateLimitStore extends Macroable {
     const bucket = buckets[ruleIndex]
     const window = this.options.windowMs[rule.type]
 
-    while (bucket.length && bucket[0] <= now - window) {
-      bucket.shift()
-    }
+    this.pruneExpiredEntries(bucket, window, now)
 
-    const remaining = Math.max(0, rule.limit - bucket.length)
+    const remaining = Math.max(0, rule.limit - this.countEntries(bucket))
 
     debug('remaining for rule type %s: %d', ruleType, remaining)
 
@@ -310,16 +302,14 @@ export class RateLimitStore extends Macroable {
     const bucket = buckets[ruleIndex]
     const window = this.options.windowMs[rule.type]
 
-    while (bucket.length && bucket[0] <= now - window) {
-      bucket.shift()
-    }
+    this.pruneExpiredEntries(bucket, window, now)
 
     if (bucket.length === 0) {
       debug('bucket empty, resets now')
       return now
     }
 
-    const earliestTimestamp = bucket[0]
+    const earliestTimestamp = bucket[0][0]
     const oneYearAgo = now - 365 * 86_400_000
     const oneYearFromNow = now + 365 * 86_400_000
 
@@ -395,14 +385,16 @@ export class RateLimitStore extends Macroable {
         return
       }
 
-      this.rebuildBucket(bucket, bucket.length, targetResetAt, window)
+      const used = this.countEntries(bucket)
+
+      this.rebuildBucket(bucket, used, targetResetAt, window)
 
       await cache.set(key, JSON.stringify(buckets))
 
       debug(
         'rebuilt bucket for rule type %s with %d used requests and resetAt %d',
         ruleType,
-        bucket.length,
+        used,
         targetResetAt
       )
     })
@@ -456,7 +448,7 @@ export class RateLimitStore extends Macroable {
         state.secondsUntilReset !== undefined
           ? this.getTargetResetAt(now, state.secondsUntilReset)
           : bucket.length
-          ? bucket[0] + window
+          ? bucket[0][0] + window
           : now + window
 
       if (!targetResetAt) {
@@ -580,10 +572,71 @@ export class RateLimitStore extends Macroable {
     }
   }
 
-  private pruneExpiredEntries(bucket: number[], window: number, now: number) {
-    while (bucket.length && bucket[0] <= now - window) {
-      bucket.shift()
+  private pruneExpiredEntries(
+    bucket: RateLimitBucket,
+    window: number,
+    now: number
+  ) {
+    const cutoff = now - window
+
+    let size = 0
+
+    for (const entry of bucket) {
+      if (entry[0] > cutoff) {
+        bucket[size++] = entry
+      }
     }
+
+    bucket.length = size
+  }
+
+  private countEntries(bucket: RateLimitBucket) {
+    return bucket.reduce((total, [, count]) => total + count, 0)
+  }
+
+  private addEntry(bucket: RateLimitBucket, now: number, window: number) {
+    const timestamp = this.getSlotTimestamp(now, window)
+    const entry = bucket.find(([slot]) => slot === timestamp)
+
+    if (entry) {
+      entry[1]++
+
+      return
+    }
+
+    bucket.push([timestamp, 1])
+  }
+
+  /**
+   * Round the timestamp up to the end of its slot, so entries sharing a
+   * slot never expire before any of the requests they represent.
+   */
+  private getSlotTimestamp(timestamp: number, window: number) {
+    const size = Math.max(1, Math.floor(window / WINDOW_SLOTS))
+
+    return Math.ceil(timestamp / size) * size
+  }
+
+  private isBucketEntry(value: unknown): value is RateLimitBucketEntry {
+    return (
+      Is.Array(value) &&
+      value.length === 2 &&
+      Number.isFinite(value[0]) &&
+      Number.isFinite(value[1]) &&
+      value[1] > 0
+    )
+  }
+
+  private normalizeBucket(value: unknown): RateLimitBucket {
+    if (!Is.Array(value)) {
+      return []
+    }
+
+    if (value.every(item => this.isBucketEntry(item))) {
+      return value as RateLimitBucket
+    }
+
+    return value.filter(item => this.isBucketEntry(item))
   }
 
   private normalizeRemaining(remaining: number, limit: number) {
@@ -615,17 +668,15 @@ export class RateLimitStore extends Macroable {
   }
 
   private rebuildBucket(
-    bucket: number[],
+    bucket: RateLimitBucket,
     used: number,
     resetAt: number,
     window: number
   ) {
-    const timestamp = resetAt - window
-
     bucket.length = 0
 
-    for (let i = 0; i < used; i++) {
-      bucket.push(timestamp)
+    if (used > 0) {
+      bucket.push([resetAt - window, used])
     }
   }
 }
